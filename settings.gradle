@@ -47,3 +47,9 @@ if (extensionsList.isFile()) {
 		}
 	}
 }
+
+buildCache {
+	local {
+		directory = "${settingsDir}/build-cache"
+	}
+}
