@@ -31,6 +31,8 @@ import ghidra.dbg.gadp.client.GadpClient;
 import ghidra.dbg.gadp.protocol.Gadp;
 import ghidra.dbg.gadp.protocol.Gadp.ModelObjectDelta;
 import ghidra.dbg.gadp.protocol.Gadp.ModelObjectInfo;
+import ghidra.dbg.target.TargetAttacher.TargetAttachKind;
+import ghidra.dbg.target.TargetAttacher.TargetAttachKindSet;
 import ghidra.dbg.target.TargetBreakpointContainer.TargetBreakpointKindSet;
 import ghidra.dbg.target.TargetBreakpointSpec.TargetBreakpointKind;
 import ghidra.dbg.target.TargetEventScope.TargetEventType;
@@ -65,29 +67,68 @@ public enum GadpValueUtils {
 
 	public static TargetBreakpointKind getBreakKind(Gadp.BreakKind kind) {
 		switch (kind) {
-			case READ:
+			case BK_READ:
 				return TargetBreakpointKind.READ;
-			case WRITE:
+			case BK_WRITE:
 				return TargetBreakpointKind.WRITE;
-			case EXECUTE:
+			case BK_EXECUTE:
 				return TargetBreakpointKind.EXECUTE;
-			case SOFTWARE:
+			case BK_SOFTWARE:
 				return TargetBreakpointKind.SOFTWARE;
 			default:
 				throw new IllegalArgumentException();
 		}
 	}
 
+	public static Gadp.BreakKindsSet makeBreakKindSet(Set<TargetBreakpointKind> set) {
+		return Gadp.BreakKindsSet.newBuilder()
+				.addAllK(set.stream().map(k -> makeBreakKind(k)).collect(Collectors.toList()))
+				.build();
+	}
+
 	public static Gadp.BreakKind makeBreakKind(TargetBreakpointKind kind) {
 		switch (kind) {
 			case READ:
-				return Gadp.BreakKind.READ;
+				return Gadp.BreakKind.BK_READ;
 			case WRITE:
-				return Gadp.BreakKind.WRITE;
+				return Gadp.BreakKind.BK_WRITE;
 			case EXECUTE:
-				return Gadp.BreakKind.EXECUTE;
+				return Gadp.BreakKind.BK_EXECUTE;
 			case SOFTWARE:
-				return Gadp.BreakKind.SOFTWARE;
+				return Gadp.BreakKind.BK_SOFTWARE;
+			default:
+				throw new IllegalArgumentException();
+		}
+	}
+
+	public static TargetAttachKindSet getAttachKindSet(Gadp.AttachKindSet set) {
+		return TargetAttachKindSet.copyOf(
+			set.getKList().stream().map(k -> getAttachKind(k)).collect(Collectors.toSet()));
+	}
+
+	public static TargetAttachKind getAttachKind(Gadp.AttachKind kind) {
+		switch (kind) {
+			case AK_BY_OBJECT_REF:
+				return TargetAttachKind.BY_OBJECT_REF;
+			case AK_BY_ID:
+				return TargetAttachKind.BY_ID;
+			default:
+				throw new IllegalArgumentException();
+		}
+	}
+
+	public static Gadp.AttachKindSet makeAttachKindSet(Set<TargetAttachKind> set) {
+		return Gadp.AttachKindSet.newBuilder()
+				.addAllK(set.stream().map(k -> makeAttachKind(k)).collect(Collectors.toList()))
+				.build();
+	}
+
+	public static Gadp.AttachKind makeAttachKind(TargetAttachKind kind) {
+		switch (kind) {
+			case BY_OBJECT_REF:
+				return Gadp.AttachKind.AK_BY_OBJECT_REF;
+			case BY_ID:
+				return Gadp.AttachKind.AK_BY_ID;
 			default:
 				throw new IllegalArgumentException();
 		}
@@ -100,23 +141,23 @@ public enum GadpValueUtils {
 
 	public static TargetStepKind getStepKind(Gadp.StepKind kind) {
 		switch (kind) {
-			case ADVANCE:
+			case SK_ADVANCE:
 				return TargetStepKind.ADVANCE;
-			case FINISH:
+			case SK_FINISH:
 				return TargetStepKind.FINISH;
-			case INTO:
+			case SK_INTO:
 				return TargetStepKind.INTO;
-			case LINE:
+			case SK_LINE:
 				return TargetStepKind.LINE;
-			case OVER:
+			case SK_OVER:
 				return TargetStepKind.OVER;
-			case OVER_LINE:
+			case SK_OVER_LINE:
 				return TargetStepKind.OVER_LINE;
-			case RETURN:
+			case SK_RETURN:
 				return TargetStepKind.RETURN;
-			case SKIP:
+			case SK_SKIP:
 				return TargetStepKind.SKIP;
-			case UNTIL:
+			case SK_UNTIL:
 				return TargetStepKind.UNTIL;
 			default:
 				throw new IllegalArgumentException();
@@ -126,23 +167,23 @@ public enum GadpValueUtils {
 	public static Gadp.StepKind makeStepKind(TargetStepKind kind) {
 		switch (kind) {
 			case ADVANCE:
-				return Gadp.StepKind.ADVANCE;
+				return Gadp.StepKind.SK_ADVANCE;
 			case FINISH:
-				return Gadp.StepKind.FINISH;
+				return Gadp.StepKind.SK_FINISH;
 			case INTO:
-				return Gadp.StepKind.INTO;
+				return Gadp.StepKind.SK_INTO;
 			case LINE:
-				return Gadp.StepKind.LINE;
+				return Gadp.StepKind.SK_LINE;
 			case OVER:
-				return Gadp.StepKind.OVER;
+				return Gadp.StepKind.SK_OVER;
 			case OVER_LINE:
-				return Gadp.StepKind.OVER_LINE;
+				return Gadp.StepKind.SK_OVER_LINE;
 			case RETURN:
-				return Gadp.StepKind.RETURN;
+				return Gadp.StepKind.SK_RETURN;
 			case SKIP:
-				return Gadp.StepKind.SKIP;
+				return Gadp.StepKind.SK_SKIP;
 			case UNTIL:
-				return Gadp.StepKind.UNTIL;
+				return Gadp.StepKind.SK_UNTIL;
 			default:
 				throw new IllegalArgumentException();
 		}
@@ -150,15 +191,15 @@ public enum GadpValueUtils {
 
 	public static TargetExecutionState getExecutionState(Gadp.ExecutionState state) {
 		switch (state) {
-			case INACTIVE:
+			case ES_INACTIVE:
 				return TargetExecutionState.INACTIVE;
-			case ALIVE:
+			case ES_ALIVE:
 				return TargetExecutionState.ALIVE;
-			case STOPPED:
+			case ES_STOPPED:
 				return TargetExecutionState.STOPPED;
-			case RUNNING:
+			case ES_RUNNING:
 				return TargetExecutionState.RUNNING;
-			case TERMINATED:
+			case ES_TERMINATED:
 				return TargetExecutionState.TERMINATED;
 			default:
 				throw new IllegalArgumentException();
@@ -168,15 +209,15 @@ public enum GadpValueUtils {
 	public static Gadp.ExecutionState makeExecutionState(TargetExecutionState state) {
 		switch (state) {
 			case INACTIVE:
-				return Gadp.ExecutionState.INACTIVE;
+				return Gadp.ExecutionState.ES_INACTIVE;
 			case ALIVE:
-				return Gadp.ExecutionState.ALIVE;
+				return Gadp.ExecutionState.ES_ALIVE;
 			case STOPPED:
-				return Gadp.ExecutionState.STOPPED;
+				return Gadp.ExecutionState.ES_STOPPED;
 			case RUNNING:
-				return Gadp.ExecutionState.RUNNING;
+				return Gadp.ExecutionState.ES_RUNNING;
 			case TERMINATED:
-				return Gadp.ExecutionState.TERMINATED;
+				return Gadp.ExecutionState.ES_TERMINATED;
 			default:
 				throw new IllegalArgumentException();
 		}
@@ -189,25 +230,25 @@ public enum GadpValueUtils {
 				return TargetEventType.STOPPED;
 			case EV_RUNNING:
 				return TargetEventType.RUNNING;
-			case PROCESS_CREATED:
+			case EV_PROCESS_CREATED:
 				return TargetEventType.PROCESS_CREATED;
-			case PROCESS_EXITED:
+			case EV_PROCESS_EXITED:
 				return TargetEventType.PROCESS_EXITED;
-			case THREAD_CREATED:
+			case EV_THREAD_CREATED:
 				return TargetEventType.THREAD_CREATED;
-			case THREAD_EXITED:
+			case EV_THREAD_EXITED:
 				return TargetEventType.THREAD_EXITED;
-			case MODULE_LOADED:
+			case EV_MODULE_LOADED:
 				return TargetEventType.MODULE_LOADED;
-			case MODULE_UNLOADED:
+			case EV_MODULE_UNLOADED:
 				return TargetEventType.MODULE_UNLOADED;
-			case BREAKPOINT_HIT:
+			case EV_BREAKPOINT_HIT:
 				return TargetEventType.BREAKPOINT_HIT;
-			case STEP_COMPLETED:
+			case EV_STEP_COMPLETED:
 				return TargetEventType.STEP_COMPLETED;
-			case EXCEPTION:
+			case EV_EXCEPTION:
 				return TargetEventType.EXCEPTION;
-			case SIGNAL:
+			case EV_SIGNAL:
 				return TargetEventType.SIGNAL;
 		}
 	}
@@ -220,25 +261,25 @@ public enum GadpValueUtils {
 			case RUNNING:
 				return Gadp.TargetEventType.EV_RUNNING;
 			case PROCESS_CREATED:
-				return Gadp.TargetEventType.PROCESS_CREATED;
+				return Gadp.TargetEventType.EV_PROCESS_CREATED;
 			case PROCESS_EXITED:
-				return Gadp.TargetEventType.PROCESS_EXITED;
+				return Gadp.TargetEventType.EV_PROCESS_EXITED;
 			case THREAD_CREATED:
-				return Gadp.TargetEventType.THREAD_CREATED;
+				return Gadp.TargetEventType.EV_THREAD_CREATED;
 			case THREAD_EXITED:
-				return Gadp.TargetEventType.THREAD_EXITED;
+				return Gadp.TargetEventType.EV_THREAD_EXITED;
 			case MODULE_LOADED:
-				return Gadp.TargetEventType.MODULE_LOADED;
+				return Gadp.TargetEventType.EV_MODULE_LOADED;
 			case MODULE_UNLOADED:
-				return Gadp.TargetEventType.MODULE_UNLOADED;
+				return Gadp.TargetEventType.EV_MODULE_UNLOADED;
 			case BREAKPOINT_HIT:
-				return Gadp.TargetEventType.BREAKPOINT_HIT;
+				return Gadp.TargetEventType.EV_BREAKPOINT_HIT;
 			case STEP_COMPLETED:
-				return Gadp.TargetEventType.STEP_COMPLETED;
+				return Gadp.TargetEventType.EV_STEP_COMPLETED;
 			case EXCEPTION:
-				return Gadp.TargetEventType.EXCEPTION;
+				return Gadp.TargetEventType.EV_EXCEPTION;
 			case SIGNAL:
-				return Gadp.TargetEventType.SIGNAL;
+				return Gadp.TargetEventType.EV_SIGNAL;
 		}
 	}
 
@@ -304,12 +345,6 @@ public enum GadpValueUtils {
 				.build();
 	}
 
-	public static Gadp.BreakKindsSet makeBreakKindSet(Set<TargetBreakpointKind> set) {
-		return Gadp.BreakKindsSet.newBuilder()
-				.addAllK(set.stream().map(k -> makeBreakKind(k)).collect(Collectors.toList()))
-				.build();
-	}
-
 	public static Gadp.RegisterValue makeRegisterValue(Map.Entry<String, byte[]> e) {
 		return Gadp.RegisterValue.newBuilder()
 				.setName(e.getKey())
@@ -348,22 +383,22 @@ public enum GadpValueUtils {
 	public static Gadp.UpdateMode makeUpdateMode(TargetUpdateMode mode) {
 		switch (mode) {
 			case SOLICITED:
-				return Gadp.UpdateMode.SOLICITED;
+				return Gadp.UpdateMode.UM_SOLICITED;
 			case FIXED:
-				return Gadp.UpdateMode.FIXED;
+				return Gadp.UpdateMode.UM_FIXED;
 			case UNSOLICITED:
 			default:
-				return Gadp.UpdateMode.UNSOLICITED;
+				return Gadp.UpdateMode.UM_UNSOLICITED;
 		}
 	}
 
 	public static TargetUpdateMode getUpdateMode(Gadp.UpdateMode mode) {
 		switch (mode) {
-			case FIXED:
+			case UM_FIXED:
 				return TargetUpdateMode.FIXED;
-			case SOLICITED:
+			case UM_SOLICITED:
 				return TargetUpdateMode.SOLICITED;
-			case UNSOLICITED:
+			case UM_UNSOLICITED:
 			default:
 				return TargetUpdateMode.UNSOLICITED;
 		}
@@ -569,6 +604,9 @@ public enum GadpValueUtils {
 		else if (value instanceof AddressRange) {
 			b.setRangeValue(makeRange((AddressRange) value));
 		}
+		else if (value instanceof TargetAttachKindSet) {
+			b.setAttachKindsValue(makeAttachKindSet((TargetAttachKindSet) value));
+		}
 		else if (value instanceof TargetBreakpointKindSet) {
 			b.setBreakKindsValue(makeBreakKindSet((TargetBreakpointKindSet) value));
 		}
@@ -653,6 +691,8 @@ public enum GadpValueUtils {
 				return getAddress(model, value.getAddressValue());
 			case RANGE_VALUE:
 				return getAddressRange(model, value.getRangeValue());
+			case ATTACH_KINDS_VALUE:
+				return getAttachKindSet(value.getAttachKindsValue());
 			case BREAK_KINDS_VALUE:
 				return getBreakKindSet(value.getBreakKindsValue());
 			case EXEC_STATE_VALUE:

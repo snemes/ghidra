@@ -22,8 +22,14 @@ import agent.gdb.manager.GdbRegister;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.TargetRegister;
+import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 
+@TargetObjectSchemaInfo(name = "RegisterDescriptor", elements = {
+	@TargetElementType(type = Void.class)
+}, attributes = {
+	@TargetAttributeType(type = Void.class)
+})
 public class GdbModelTargetRegister
 		extends DefaultTargetObject<TargetObject, GdbModelTargetRegisterContainer>
 		implements TargetRegister<GdbModelTargetRegister> {
@@ -52,12 +58,12 @@ public class GdbModelTargetRegister
 
 		this.bitLength = register.getSize() * 8;
 
-		changeAttributes(List.of(), Map.of(
-			CONTAINER_ATTRIBUTE_NAME, registers,
-			LENGTH_ATTRIBUTE_NAME, bitLength,
-			DISPLAY_ATTRIBUTE_NAME, register.getName(),
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED),
-			"Initialized");
+		changeAttributes(List.of(), Map.of( //
+			CONTAINER_ATTRIBUTE_NAME, registers, //
+			LENGTH_ATTRIBUTE_NAME, bitLength, //
+			DISPLAY_ATTRIBUTE_NAME, getName(), //
+			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+		), "Initialized");
 	}
 
 	@Override
@@ -67,6 +73,11 @@ public class GdbModelTargetRegister
 
 	@Override
 	public String getDisplay() {
-		return register.getName();
+		return getName();
+	}
+
+	@Override
+	public GdbModelTargetRegisterContainer getContainer() {
+		return parent;
 	}
 }

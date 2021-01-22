@@ -23,6 +23,7 @@ import java.net.SocketAddress;
 import java.nio.channels.AsynchronousSocketChannel;
 import java.util.concurrent.CompletableFuture;
 
+import org.junit.Ignore;
 import org.junit.Test;
 
 import agent.gdb.gadp.GdbGadpServer;
@@ -35,6 +36,7 @@ import ghidra.dbg.gadp.client.GadpClientTestHelper;
 import ghidra.dbg.gadp.protocol.Gadp;
 import ghidra.util.Msg;
 
+@Ignore("Need compatible GDB version for CI")
 public class GadpForGdbTest extends AbstractModelForGdbTest {
 
 	class GdbGadpModelHost implements ModelHost {
@@ -48,6 +50,8 @@ public class GadpForGdbTest extends AbstractModelForGdbTest {
 			server.startGDB(gdbCmd, new String[] {})
 			/*.get(TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)*/;
 			addr = server.getLocalAddress();
+
+			server.setExitOnClosed(false);
 
 			socket = AsynchronousSocketChannel.open();
 			client = new GadpClient("Test", socket);

@@ -20,9 +20,19 @@ import java.util.Map;
 
 import agent.dbgeng.manager.impl.DbgMinimalSymbol;
 import agent.dbgeng.model.iface2.DbgModelTargetSymbol;
+import ghidra.dbg.target.TargetSymbol;
+import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.Address;
 
+@TargetObjectSchemaInfo(name = "Symbol", elements = { //
+	@TargetElementType(type = Void.class) //
+}, attributes = { //
+	@TargetAttributeType( //
+			name = TargetSymbol.NAMESPACE_ATTRIBUTE_NAME, //
+			type = DbgModelTargetSymbolContainerImpl.class), //
+	@TargetAttributeType(type = Void.class) //
+})
 public class DbgModelTargetSymbolImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetSymbol {
 	protected static String indexSymbol(DbgMinimalSymbol symbol) {
@@ -46,6 +56,7 @@ public class DbgModelTargetSymbolImpl extends DbgModelTargetObjectImpl
 
 		changeAttributes(List.of(), List.of(), Map.of( //
 			// TODO: DATA_TYPE
+			NAMESPACE_ATTRIBUTE_NAME, symbols, //
 			VALUE_ATTRIBUTE_NAME, value, //
 			SIZE_ATTRIBUTE_NAME, size, //
 			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //

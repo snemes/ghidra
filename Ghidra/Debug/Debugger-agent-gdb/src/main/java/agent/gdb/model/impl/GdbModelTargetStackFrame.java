@@ -19,16 +19,23 @@ import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
-import agent.gdb.manager.*;
+import agent.gdb.manager.GdbRegister;
+import agent.gdb.manager.GdbStackFrame;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.error.DebuggerRegisterAccessException;
 import ghidra.dbg.target.*;
+import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.ConversionUtils;
 import ghidra.dbg.util.PathUtils;
 import ghidra.lifecycle.Internal;
 import ghidra.program.model.address.Address;
 import ghidra.util.Msg;
 
+@TargetObjectSchemaInfo(name = "StackFrame", elements = {
+	@TargetElementType(type = Void.class)
+}, attributes = {
+	@TargetAttributeType(type = Void.class)
+})
 public class GdbModelTargetStackFrame extends DefaultTargetObject<TargetObject, GdbModelTargetStack>
 		implements TargetStackFrame<GdbModelTargetStackFrame>,
 		TargetRegisterBank<GdbModelTargetStackFrame>, GdbModelSelectableObject {
@@ -53,14 +60,12 @@ public class GdbModelTargetStackFrame extends DefaultTargetObject<TargetObject, 
 	protected final GdbModelTargetThread thread;
 	protected final GdbModelTargetInferior inferior;
 
-	private Set<GdbRegister> lastRead;
-
 	protected GdbStackFrame frame;
 	protected Address pc;
 	protected String func;
 	protected String display;
 
-	private GdbModelTargetStackFrameRegisterContainer registers;
+	private final GdbModelTargetStackFrameRegisterContainer registers;
 
 	public GdbModelTargetStackFrame(GdbModelTargetStack stack, GdbModelTargetThread thread,
 			GdbModelTargetInferior inferior, GdbStackFrame frame) {
@@ -71,14 +76,20 @@ public class GdbModelTargetStackFrame extends DefaultTargetObject<TargetObject, 
 
 		this.registers = new GdbModelTargetStackFrameRegisterContainer(this);
 
-		changeAttributes(List.of(), List.of( //
-			registers //
-		), Map.of( //
-			DESCRIPTIONS_ATTRIBUTE_NAME, getDescriptions(), //
-			DISPLAY_ATTRIBUTE_NAME, display = computeDisplay(frame), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
-		), "Initialized");
+		changeAttributes(List.of(),
+			List.of(
+				registers),
+			Map.of(
+				DESCRIPTIONS_ATTRIBUTE_NAME, getDescriptions(),
+				DISPLAY_ATTRIBUTE_NAME, display = computeDisplay(frame),
+				UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED),
+			"Initialized");
 		setFrame(frame);
+	}
+
+	@TargetAttributeType(name = GdbModelTargetStackFrameRegisterContainer.NAME, required = true, fixed = true)
+	public GdbModelTargetStackFrameRegisterContainer getRegisters() {
+		return registers;
 	}
 
 	@Override
@@ -98,7 +109,6 @@ public class GdbModelTargetStackFrame extends DefaultTargetObject<TargetObject, 
 				}
 				toRead.add(reg.register);
 			}
-			this.lastRead = toRead;
 			return frame.readRegisters(toRead);
 		}).thenApply(vals -> {
 			Map<String, byte[]> result = new LinkedHashMap<>();
@@ -168,8 +178,8 @@ public class GdbModelTargetStackFrame extends DefaultTargetObject<TargetObject, 
 		return frame.select();
 	}
 
-	public CompletableFuture<GdbRegisterSet> listRegisters() {
-		GdbRegisterSet set = new GdbRegisterSet(lastRead);
-		return CompletableFuture.completedFuture(set);
+	@TargetAttributeType(name = FUNC_ATTRIBUTE_NAME)
+	public String getFunction() {
+		return func;
 	}
 }

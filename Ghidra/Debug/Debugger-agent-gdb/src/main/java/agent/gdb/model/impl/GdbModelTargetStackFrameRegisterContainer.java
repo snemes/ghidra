@@ -16,21 +16,21 @@
 package agent.gdb.model.impl;
 
 import java.math.BigInteger;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
+import java.util.*;
 
 import agent.gdb.manager.GdbRegister;
-import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
-import ghidra.dbg.target.TargetRegisterContainer;
-import ghidra.util.Msg;
+import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
 import ghidra.util.datastruct.WeakValueHashMap;
 
+// NB. The canonical container, but of no recognized interface
+@TargetObjectSchemaInfo(name = "RegisterValueContainer", attributes = {
+	@TargetAttributeType(type = Void.class)
+}, canonicalContainer = true)
 public class GdbModelTargetStackFrameRegisterContainer
-		extends DefaultTargetObject<GdbModelTargetStackFrameRegister, GdbModelTargetStackFrame>
-		implements TargetRegisterContainer<GdbModelTargetStackFrameRegisterContainer> {
+		extends DefaultTargetObject<GdbModelTargetStackFrameRegister, GdbModelTargetStackFrame> {
+	public static final String NAME = "Registers";
 
 	protected final GdbModelImpl impl;
 	protected final GdbModelTargetStackFrame frame;
@@ -40,33 +40,10 @@ public class GdbModelTargetStackFrameRegisterContainer
 		new WeakValueHashMap<>();
 
 	public GdbModelTargetStackFrameRegisterContainer(GdbModelTargetStackFrame frame) {
-		super(frame.impl, frame, "Registers", "StackFrameRegisterContainer");
+		super(frame.impl, frame, NAME, "StackFrameRegisterContainer");
 		this.impl = frame.impl;
 		this.frame = frame;
 		this.thread = frame.thread;
-	}
-
-	@Override
-	public CompletableFuture<Void> requestElements(boolean refresh) {
-		return doRefresh();
-	}
-
-	protected CompletableFuture<Void> doRefresh() {
-		return completeUsingThread();
-	}
-
-	protected CompletableFuture<Void> completeUsingThread() {
-		return frame.listRegisters().thenAccept(regs -> {
-			List<GdbModelTargetStackFrameRegister> registers;
-			synchronized (this) { // calls getTargetRegister
-				// No stale garbage. New architecture may re-use numbers, so clear cache out!
-				registersByNumber.clear();
-				registers = regs.stream().map(this::getTargetRegister).collect(Collectors.toList());
-			}
-			// TODO: Equality only considers paths, i.e., name. If a name is re-used, the old
-			// stuff has to go. Not sure how to accomplish that, yet.
-			setElements(registers, "Refreshed");
-		});
 	}
 
 	protected synchronized GdbModelTargetStackFrameRegister getTargetRegister(
@@ -75,34 +52,15 @@ public class GdbModelTargetStackFrameRegisterContainer
 			n -> new GdbModelTargetStackFrameRegister(this, register));
 	}
 
-	public CompletableFuture<Void> refresh() {
-		if (!isObserved()) {
-			return AsyncUtils.NIL;
-		}
-		return doRefresh().exceptionally(ex -> {
-			Msg.error(this, "Problem refreshing frame's register descriptions", ex);
-			return null;
-		});
-	}
-
 	public void setValues(Map<GdbRegister, BigInteger> values) {
+		List<GdbModelTargetStackFrameRegister> registers = new ArrayList<>();
 		for (GdbRegister gdbreg : values.keySet()) {
-			GdbModelTargetStackFrameRegister reg = registersByNumber.get(gdbreg.getNumber());
-			if (reg == null) {
-				return;
-			}
-			String value = values.get(gdbreg).toString(16);
-			String oldval = (String) reg.getCachedAttributes().get(VALUE_ATTRIBUTE_NAME);
-			reg.changeAttributes(List.of(), Map.of( //
-				VALUE_ATTRIBUTE_NAME, value //
-			), "Refreshed");
-			if (values.get(gdbreg).longValue() != 0) {
-				String newval = reg.getName() + " : " + value;
-				reg.changeAttributes(List.of(), Map.of( //
-					DISPLAY_ATTRIBUTE_NAME, newval //
-				), "Refreshed");
-				reg.setModified(!value.equals(oldval));
-			}
+			GdbModelTargetStackFrameRegister reg = getTargetRegister(gdbreg);
+			registers.add(reg);
 		}
+		for (GdbModelTargetStackFrameRegister reg : registers) {
+			reg.updateValue(values.get(reg.register));
+		}
+		changeElements(List.of(), registers, "Refreshed");
 	}
 }

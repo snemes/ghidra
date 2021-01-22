@@ -13,36 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package ghidra.app.util.bin.format.dwarf.line;
+package agent.gdb.manager.impl;
 
 import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
 
-import ghidra.app.util.bin.BinaryReader;
+import org.junit.Ignore;
 
-class LEB128 {
-	private long value;
+import agent.gdb.manager.GdbManager;
 
-	LEB128(BinaryReader reader, boolean isSigned) throws IOException {
-		if (isSigned) {
-			throw new UnsupportedOperationException();
-		}
-		int shift = 0;
-		while (true) {
-			int nextByte = reader.readNextByte() & 0xff;
-			value |= ((nextByte & 0x7f) << shift);
-			if ((nextByte & 0x80) == 0) {
-				break;
-			}
-			shift += 7;
-		}
-	}
-
-	long getValue() {
-		return value;
-	}
-
+@Ignore("Need compatible GDB version for CI")
+public class SpawnedMi2GdbManagerTest2 extends AbstractGdbManagerTest {
 	@Override
-	public String toString() {
-		return "0x" + Long.toHexString(value);
+	protected CompletableFuture<Void> startManager(GdbManager manager) {
+		try {
+			manager.start(GdbManager.DEFAULT_GDB_CMD, "-i", "mi2");
+			return manager.runRC();
+		}
+		catch (IOException e) {
+			throw new AssertionError(e);
+		}
 	}
 }

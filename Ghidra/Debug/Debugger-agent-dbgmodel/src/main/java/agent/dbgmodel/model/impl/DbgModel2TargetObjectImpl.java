@@ -36,6 +36,7 @@ import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibility;
 import ghidra.dbg.target.TargetBreakpointContainer.TargetBreakpointKindSet;
 import ghidra.dbg.target.TargetBreakpointSpec.TargetBreakpointKind;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.dbg.util.PathUtils;
 import ghidra.dbg.util.PathUtils.TargetObjectKeyComparator;
 import ghidra.util.Msg;
@@ -72,7 +73,12 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 
 	public DbgModel2TargetObjectImpl(AbstractDbgModel model, TargetObject parent, String name,
 			String typeHint) {
-		super(model, parent, name, typeHint);
+		super(model, parent, name, typeHint, null);
+	}
+
+	public DbgModel2TargetObjectImpl(AbstractDbgModel model, TargetObject parent, String name,
+			String typeHint, TargetObjectSchema schema) {
+		super(model, parent, name, typeHint, schema);
 	}
 
 	@Override
@@ -243,8 +249,13 @@ public class DbgModel2TargetObjectImpl extends DefaultTargetObject<TargetObject,
 					targetThread.getThread().getExecutingProcessorType().description;
 				attrs.put(TargetEnvironment.ARCH_ATTRIBUTE_NAME, executionType);
 			}
+			if (proxy instanceof TargetRegister) {
+				DbgModelTargetObject bank = (DbgModelTargetObject) getImplParent();
+				TargetObject container = bank.getImplParent();
+				attrs.put(TargetRegister.CONTAINER_ATTRIBUTE_NAME, container);
+			}
 			if (proxy instanceof TargetRegisterBank) {
-				attrs.put(TargetRegisterBank.DESCRIPTIONS_ATTRIBUTE_NAME, this);
+				attrs.put(TargetRegisterBank.DESCRIPTIONS_ATTRIBUTE_NAME, getImplParent());
 			}
 			if (proxy instanceof TargetStackFrame) {
 				DbgModelTargetStackFrame frame = (DbgModelTargetStackFrame) proxy;

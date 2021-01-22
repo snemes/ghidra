@@ -128,8 +128,16 @@
 		                target="help/topics/DebuggerStaticMappingPlugin/DebuggerStaticMappingPlugin.html" />
 			</tocdef>
 			
+			<tocdef id="DebuggerWatchesPlugin" text="Watches"
+					sortgroup="n"
+					target="help/topics/DebuggerWatchesPlugin/DebuggerWatchesPlugin.html" />
+			
+			<tocdef id="DebuggerMemviewPlugin" text="Memview Plot"
+					sortgroup="o"
+					target="help/topics/DebuggerMemviewPlugin/DebuggerMemviewPlugin.html" />
+			
 	        <tocdef id="DebuggerBots" text="Bots: Workflow Automation" 
-	        		sortgroup="o" 
+	        		sortgroup="p" 
 	                target="help/topics/DebuggerBots/DebuggerBots.html" />
 	    </tocdef>
 	</tocref>

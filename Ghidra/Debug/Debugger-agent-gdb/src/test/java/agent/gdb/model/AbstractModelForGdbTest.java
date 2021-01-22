@@ -50,13 +50,14 @@ import ghidra.dbg.target.TargetLauncher.TargetCmdLineLauncher;
 import ghidra.dbg.target.TargetMethod.ParameterDescription;
 import ghidra.dbg.target.TargetObject.TargetObjectListener;
 import ghidra.dbg.target.TargetSteppable.TargetStepKind;
+import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.target.schema.XmlSchemaContext;
 import ghidra.dbg.testutil.DummyProc;
 import ghidra.dbg.util.*;
 import ghidra.program.model.address.Address;
 import ghidra.test.AbstractGhidraHeadlessIntegrationTest;
 import ghidra.util.*;
 
-@Ignore("Need correct version for CI")
 public abstract class AbstractModelForGdbTest
 		extends AbstractGhidraHeadlessIntegrationTest implements DebuggerModelTestUtils {
 	protected static final Map<String, byte[]> AMD64_TEST_REG_VALUES = Map.of( //
@@ -1017,6 +1018,20 @@ public abstract class AbstractModelForGdbTest
 			waitOn(focusSeqSize.waitValue(1));
 			assertEquals(model.createRef(PathUtils.parse("Inferiors[1].Threads[1].Stack[0]")),
 				focusSeq.peekLast());
+		}
+	}
+
+	@Test
+	public void testSerializeSchema() throws Throwable {
+		try (ModelHost m = modelHost()) {
+			DebuggerObjectModel model = m.getModel();
+			init(m);
+
+			TargetObjectSchema rootSchema = model.getRootSchema();
+			String serialized = XmlSchemaContext.serialize(rootSchema.getContext());
+			System.out.println(serialized);
+
+			assertEquals("Session", rootSchema.getName().toString());
 		}
 	}
 }

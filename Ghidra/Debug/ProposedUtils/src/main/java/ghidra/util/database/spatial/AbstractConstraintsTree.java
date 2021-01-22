@@ -24,7 +24,7 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.RemovalNotification;
 import com.google.common.collect.Collections2;
 
-import db.Record;
+import db.DBRecord;
 import generic.NestedIterator;
 import generic.util.PeekableIterator;
 import ghidra.util.LockHold;
@@ -77,9 +77,9 @@ public abstract class AbstractConstraintsTree< //
 		// Nothing
 	}
 
-	protected abstract DR createDataEntry(DBCachedObjectStore<DR> store, Record record);
+	protected abstract DR createDataEntry(DBCachedObjectStore<DR> store, DBRecord record);
 
-	protected abstract NR createNodeEntry(DBCachedObjectStore<NR> store, Record record);
+	protected abstract NR createNodeEntry(DBCachedObjectStore<NR> store, DBRecord record);
 
 	protected void init() {
 		assert root == null;
@@ -247,7 +247,7 @@ public abstract class AbstractConstraintsTree< //
 				data.sort(Comparator.comparing(DR::getBounds, query.getBoundsComparator()));
 			}
 			for (DR d : data) {
-				if (query != null && query.terminateEarlyData(d.getShape())) {
+				if (query != null && ordered && query.terminateEarlyData(d.getShape())) {
 					break;
 				}
 				boolean included = query == null || query.testData(d.getShape());
@@ -268,7 +268,7 @@ public abstract class AbstractConstraintsTree< //
 			nodes.sort(Comparator.comparing(NR::getBounds, query.getBoundsComparator()));
 		}
 		for (NR n : nodes) {
-			if (query != null && query.terminateEarlyNode(n.getShape())) {
+			if (query != null && ordered && query.terminateEarlyNode(n.getShape())) {
 				break;
 			}
 			r = visit(node, n, query, visitor, ordered);

@@ -20,7 +20,16 @@ import java.util.Map;
 
 import agent.dbgeng.model.iface2.DbgModelTargetConnector;
 import agent.dbgeng.model.iface2.DbgModelTargetRoot;
+import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
 
+@TargetObjectSchemaInfo(name = "ConnectorContainer", attributes = { //
+	@TargetAttributeType(name = "Launch process", type = DbgModelTargetProcessLaunchConnectorImpl.class, required = true, fixed = true), //
+	@TargetAttributeType(name = "Attach to process", type = DbgModelTargetProcessAttachConnectorImpl.class, required = true, fixed = true), //
+	@TargetAttributeType(name = "Load trace/dump", type = DbgModelTargetTraceOrDumpConnectorImpl.class, required = true, fixed = true), //
+	@TargetAttributeType(name = "Attach to kernel", type = DbgModelTargetKernelConnectorImpl.class, required = true, fixed = true), //
+	@TargetAttributeType(type = Void.class) //
+}, canonicalContainer = true)
 public class DbgModelTargetConnectorContainerImpl extends DbgModelTargetObjectImpl {
 
 	protected final DbgModelTargetRoot root;
@@ -33,7 +42,7 @@ public class DbgModelTargetConnectorContainerImpl extends DbgModelTargetObjectIm
 	protected final DbgModelTargetKernelConnectorImpl kernelAttacher;
 
 	public DbgModelTargetConnectorContainerImpl(DbgModelTargetRoot root) {
-		super(root.getModel(), root, "Connectors", "ConnectorsContainer");
+		super(root.getModel(), root, "Connectors", "ConnectorsContainer", null);
 		this.root = root;
 
 		this.processLauncher = new DbgModelTargetProcessLaunchConnectorImpl(this, "Launch process");

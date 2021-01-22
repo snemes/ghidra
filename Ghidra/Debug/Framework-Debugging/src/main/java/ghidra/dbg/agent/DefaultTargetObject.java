@@ -22,6 +22,7 @@ import ghidra.async.AsyncUtils;
 import ghidra.dbg.DebuggerObjectModel;
 import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.TargetObject;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.dbg.util.CollectionUtils.Delta;
 import ghidra.dbg.util.PathUtils;
 import ghidra.dbg.util.PathUtils.TargetObjectKeyComparator;
@@ -49,6 +50,20 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 	protected CompletableFuture<Void> curAttrsRequest;
 
 	/**
+	 * Construct a new default target object whose schema is derived from the parent
+	 * 
+	 * @see #DefaultTargetObject(DebuggerObjectModel, TargetObject, String, String,
+	 *      TargetObjectSchema)
+	 * @param model the model to which the object belongs
+	 * @param parent the (non-null) parent of this object
+	 * @param key the key (attribute name or element index) of this object
+	 * @param typeHint the type hint for this object
+	 */
+	public DefaultTargetObject(DebuggerObjectModel model, P parent, String key, String typeHint) {
+		this(model, parent, key, typeHint, parent.getSchema().getChildSchema(key));
+	}
+
+	/**
 	 * Construct a new default target object
 	 * 
 	 * <p>
@@ -71,29 +86,14 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 	 * @param parent the parent of this object
 	 * @param key the key (attribute name or element index) of this object
 	 * @param typeHint the type hint for this object
+	 * @param schema the schema of this object
 	 */
-	public DefaultTargetObject(DebuggerObjectModel model, P parent, String key, String typeHint) {
-		super(model, parent, key, typeHint);
+	public DefaultTargetObject(DebuggerObjectModel model, P parent, String key, String typeHint,
+			TargetObjectSchema schema) {
+		super(model, parent, key, typeHint, schema);
 		changeAttributes(List.of(), List.of(), Map.of(DISPLAY_ATTRIBUTE_NAME,
 			key == null ? "<root>" : key, UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.UNSOLICITED),
 			"Initialized");
-	}
-
-	/**
-	 * Get an alternative for {@code this} when invoking the listeners.
-	 * 
-	 * <p>
-	 * Some implementations may use on a proxy-delegate pattern to implement target objects with
-	 * various combinations of supported interfaces. When this pattern is employed, the delegate
-	 * will extend {@link DefaultTargetObject}, causing {@code this} to refer to the delegate rather
-	 * than the proxy. When invoking listeners, the proxy given by this method is used instead. By
-	 * default, it simply returns {@code this}, providing the expected behavior for typical
-	 * implementations.
-	 * 
-	 * @return
-	 */
-	public TargetObject getProxy() {
-		return this;
 	}
 
 	/**
@@ -193,7 +193,7 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 		Map<String, E> asMap = new LinkedHashMap<>();
 		for (E e : canonical) {
 			if (!PathUtils.parent(e.getPath()).equals(getPath())) {
-				Msg.error(this, "Link found in canonical elements: " + e);
+				Msg.error(this, "Link found in canonical elements of " + parent + ": " + e);
 			}
 			asMap.put(e.getIndex(), e);
 		}
@@ -237,6 +237,10 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 		synchronized (this.elements) {
 			delta = Delta.computeAndSet(this.elements, elements, Delta.SAME);
 		}
+		TargetObjectSchema schemax = getSchema();
+		if (schemax != null) {
+			schemax.validateElementDelta(getProxy(), delta, enforcesStrictSchema());
+		}
 		doInvalidateElements(delta.removed.values(), reason);
 		if (!delta.isEmpty()) {
 			listeners.fire.elementsChanged(getProxy(), delta.getKeysRemoved(), delta.added);
@@ -277,6 +281,10 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 		Delta<E, E> delta;
 		synchronized (elements) {
 			delta = Delta.apply(this.elements, remove, add, Delta.SAME);
+		}
+		TargetObjectSchema schemax = getSchema();
+		if (schemax != null) {
+			schemax.validateElementDelta(getProxy(), delta, enforcesStrictSchema());
 		}
 		doInvalidateElements(delta.removed.values(), reason);
 		if (!delta.isEmpty()) {
@@ -393,6 +401,10 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 		synchronized (this.attributes) {
 			delta = Delta.computeAndSet(this.attributes, attributes, Delta.EQUAL);
 		}
+		TargetObjectSchema schemax = getSchema();
+		if (schemax != null) {
+			schemax.validateAttributeDelta(getProxy(), delta, enforcesStrictSchema());
+		}
 		doInvalidateAttributes(delta.removed, reason);
 		if (!delta.isEmpty()) {
 			listeners.fire.attributesChanged(getProxy(), delta.getKeysRemoved(), delta.added);
@@ -433,6 +445,10 @@ public class DefaultTargetObject<E extends TargetObject, P extends TargetObject>
 		Delta<?, ?> delta;
 		synchronized (attributes) {
 			delta = Delta.apply(this.attributes, remove, add, Delta.EQUAL);
+		}
+		TargetObjectSchema schemax = getSchema();
+		if (schemax != null) {
+			schemax.validateAttributeDelta(getProxy(), delta, enforcesStrictSchema());
 		}
 		doInvalidateAttributes(delta.removed, reason);
 		if (!delta.isEmpty()) {

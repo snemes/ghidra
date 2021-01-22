@@ -27,6 +27,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.jdom.JDOMException;
 
 import com.google.common.cache.RemovalNotification;
 import com.google.protobuf.Message;
@@ -43,6 +44,8 @@ import ghidra.dbg.gadp.protocol.Gadp.*;
 import ghidra.dbg.gadp.util.*;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.TargetObject.TargetUpdateMode;
+import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.target.schema.XmlSchemaContext;
 import ghidra.dbg.util.PathUtils;
 import ghidra.dbg.util.PathUtils.PathComparator;
 import ghidra.lifecycle.Internal;
@@ -140,33 +143,33 @@ public class GadpClient implements DebuggerObjectModel {
 		Gadp.ErrorReply error = MSG_HELPER.expect(msg, Gadp.ErrorReply.getDefaultInstance());
 		if (error != null) {
 			switch (error.getCode()) {
-				case NO_INTERFACE:
+				case EC_NO_INTERFACE:
 					throw new DebuggerModelTypeException(error.getMessage());
-				case NO_OBJECT:
+				case EC_NO_OBJECT:
 					throw new DebuggerModelNoSuchPathException(error.getMessage());
-				case BAD_ARGUMENT:
+				case EC_BAD_ARGUMENT:
 					throw new DebuggerIllegalArgumentException(error.getMessage());
-				case MEMORY_ACCESS:
+				case EC_MEMORY_ACCESS:
 					throw new DebuggerMemoryAccessException(error.getMessage());
-				case REGISTER_ACCESS:
+				case EC_REGISTER_ACCESS:
 					throw new DebuggerRegisterAccessException(error.getMessage());
-				case BAD_ADDRESS:
+				case EC_BAD_ADDRESS:
 					throw new AssertionError(
 						"Client implementation sent an invalid address: " + error.getMessage());
-				case BAD_REQUEST:
+				case EC_BAD_REQUEST:
 					throw new AssertionError(
 						"Client implementation sent an invalid request: " + error.getMessage());
 				case UNRECOGNIZED:
 					throw new AssertionError(
 						"Server replied with an error code unknown to the client: " +
 							error.getCodeValue() + ": " + error.getMessage());
-				case USER_ERROR:
+				case EC_USER_ERROR:
 					throw new DebuggerUserException(error.getMessage());
-				case MODEL_ACCESS:
+				case EC_MODEL_ACCESS:
 					throw new DebuggerModelAccessException(error.getMessage());
-				case UNKNOWN:
+				case EC_UNKNOWN:
 					throw new RuntimeException("Unknown: " + error.getMessage());
-				case NO_VERSION:
+				case EC_NO_VERSION:
 				default:
 					throw new GadpErrorException(error.getCode(), error.getMessage());
 			}
@@ -267,6 +270,8 @@ public class GadpClient implements DebuggerObjectModel {
 	protected AsyncReference<ChannelState, DebuggerModelClosedReason> channelState =
 		new AsyncReference<>(ChannelState.INACTIVE);
 	protected GadpVersion activeVersion = null;
+	protected XmlSchemaContext schemaContext;
+	protected TargetObjectSchema rootSchema;
 
 	protected final ListenerSet<DebuggerModelListener> listenersClient =
 		new ListenerSet<>(DebuggerModelListener.class);
@@ -461,6 +466,13 @@ public class GadpClient implements DebuggerObjectModel {
 			GadpVersion version = GadpVersion.getByName(rep.getVersion());
 			synchronized (this) {
 				activeVersion = version;
+				try {
+					schemaContext = XmlSchemaContext.deserialize(rep.getSchemaContext());
+				}
+				catch (JDOMException e) {
+					throw new GadpMessageException("Invalid schema context XML", e);
+				}
+				rootSchema = schemaContext.getSchema(schemaContext.name(rep.getRootSchema()));
 			}
 			channelState.set(ChannelState.ACTIVE, null);
 			// launches in background in parallel, with its own error reporting
@@ -498,6 +510,11 @@ public class GadpClient implements DebuggerObjectModel {
 	@Override
 	public boolean isAlive() {
 		return channelState.get() == ChannelState.ACTIVE;
+	}
+
+	@Override
+	public TargetObjectSchema getRootSchema() {
+		return rootSchema;
 	}
 
 	@Override
