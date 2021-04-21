@@ -3,3 +3,4 @@
 .project||NONE||reviewed||END|
 Module.manifest||GHIDRA||||END|
 build.gradle||GHIDRA||||END|
+data/ExtensionPoint.manifest||GHIDRA||||END|

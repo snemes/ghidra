@@ -41,9 +41,9 @@ public enum GadpRegistry {
 	public static final Map<Class<? extends TargetObject>, Class<? extends TargetObject>> MIXIN_REGISTRY =
 		new HashMap<>();
 
-	public static <T extends TargetObject, U extends T> void registerInterface(Class<T> iface,
+	public static <T extends TargetObject> void registerInterface(Class<T> iface,
 			Class<? extends T> mixin) {
-		String name = DebuggerObjectModel.requireIfaceName(iface);
+		DebuggerObjectModel.requireIfaceName(iface);
 		MIXIN_REGISTRY.put(iface, mixin);
 	}
 
@@ -52,17 +52,22 @@ public enum GadpRegistry {
 		registerInterface(TargetAggregate.class, GadpClientTargetAggregate.class);
 		registerInterface(TargetAttachable.class, GadpClientTargetAttachable.class);
 		registerInterface(TargetAttacher.class, GadpClientTargetAttacher.class);
-		registerInterface(TargetBreakpointContainer.class,
-			GadpClientTargetBreakpointContainer.class);
+		registerInterface(TargetBreakpointLocation.class, GadpClientTargetBreakpointLocation.class);
+		registerInterface(TargetBreakpointLocationContainer.class,
+			GadpClientTargetBreakpointLocationContainer.class);
+		registerInterface(TargetBreakpointSpecContainer.class,
+			GadpClientTargetBreakpointSpecContainer.class);
 		registerInterface(TargetBreakpointSpec.class, GadpClientTargetBreakpointSpec.class);
+		registerInterface(TargetConfigurable.class, GadpClientTargetConfigurable.class);
+		registerInterface(TargetConsole.class, GadpClientTargetConsole.class);
 		registerInterface(TargetDataTypeMember.class, GadpClientTargetDataTypeMember.class);
 		registerInterface(TargetDataTypeNamespace.class, GadpClientTargetDataTypeNamespace.class);
 		registerInterface(TargetDeletable.class, GadpClientTargetDeletable.class);
 		registerInterface(TargetDetachable.class, GadpClientTargetDetachable.class);
-		registerInterface(TargetBreakpointLocation.class, GadpClientTargetBreakpointLocation.class);
 		registerInterface(TargetEnvironment.class, GadpClientTargetEnvironment.class);
 		registerInterface(TargetEventScope.class, GadpClientTargetEventScope.class);
 		registerInterface(TargetExecutionStateful.class, GadpClientTargetExecutionStateful.class);
+		registerInterface(TargetActiveScope.class, GadpClientTargetActiveScope.class);
 		registerInterface(TargetFocusScope.class, GadpClientTargetFocusScope.class);
 		registerInterface(TargetInterpreter.class, GadpClientTargetInterpreter.class);
 		registerInterface(TargetInterruptible.class, GadpClientTargetInterruptible.class);
@@ -80,12 +85,14 @@ public enum GadpRegistry {
 		registerInterface(TargetRegisterContainer.class, GadpClientTargetRegisterContainer.class);
 		registerInterface(TargetResumable.class, GadpClientTargetResumable.class);
 		registerInterface(TargetSection.class, GadpClientTargetSection.class);
+		registerInterface(TargetSectionContainer.class, GadpClientTargetSectionContainer.class);
 		registerInterface(TargetStack.class, GadpClientTargetStack.class);
 		registerInterface(TargetStackFrame.class, GadpClientTargetStackFrame.class);
 		registerInterface(TargetSteppable.class, GadpClientTargetSteppable.class);
 		registerInterface(TargetSymbol.class, GadpClientTargetSymbol.class);
 		registerInterface(TargetSymbolNamespace.class, GadpClientTargetSymbolNamespace.class);
 		registerInterface(TargetThread.class, GadpClientTargetThread.class);
+		registerInterface(TargetTogglable.class, GadpClientTargetTogglable.class);
 	}
 
 	public static List<Class<? extends TargetObject>> getMixins(

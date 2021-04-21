@@ -1852,7 +1852,7 @@ int4 ActionReturnRecovery::apply(Funcdata &data)
 	int4 slot = trial.getSlot();
 	vn = op->getIn(slot);
 	if (ancestorReal.execute(op,slot,&trial,false))
-	  if (data.ancestorOpUse(maxancestor,vn,op,trial))
+	  if (data.ancestorOpUse(maxancestor,vn,op,trial,0))
 	    trial.markActive(); // This varnode sees active use as a parameter
 	count += 1;
       }
@@ -3477,9 +3477,10 @@ bool ActionDeadCode::isEventualConstant(Varnode *vn,int4 addCount,int4 loadCount
 /// \brief Check if there are any unconsumed LOADs that may be from volatile addresses.
 ///
 /// It may be too early to remove certain LOAD operations even though their result isn't
-/// consumed because it be of a volatile address with side effects.  If a LOAD meets this
+/// consumed because it may be of a volatile address with side effects.  If a LOAD meets this
 /// criteria, it is added to the worklist and \b true is returned.
 /// \param data is the function being analyzed
+/// \param worklist is the container of consumed Varnodes to further process
 /// \return \b true if there was at least one LOAD added to the worklist
 bool ActionDeadCode::lastChanceLoad(Funcdata &data,vector<Varnode *> &worklist)
 

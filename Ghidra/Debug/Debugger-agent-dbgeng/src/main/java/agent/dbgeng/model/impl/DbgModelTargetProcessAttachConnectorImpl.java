@@ -29,11 +29,14 @@ import ghidra.dbg.target.TargetMethod.ParameterDescription;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
 import ghidra.dbg.target.schema.*;
 
-@TargetObjectSchemaInfo(name = "ProcessAttachConnector", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "ProcessAttachConnector",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(type = Void.class)
+	})
 public class DbgModelTargetProcessAttachConnectorImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetConnector {
 
@@ -48,13 +51,12 @@ public class DbgModelTargetProcessAttachConnectorImpl extends DbgModelTargetObje
 		changeAttributes(List.of(), List.of(), Map.of( //
 			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
 			TargetMethod.PARAMETERS_ATTRIBUTE_NAME,
-			paramDescs = TargetParameterMap.copyOf(computeParameters()), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			paramDescs = TargetParameterMap.copyOf(computeParameters()) //
 		), "Initialized");
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
+	public CompletableFuture<Void> setActive() {
 		connectors.setDefaultConnector(this);
 		return CompletableFuture.completedFuture(null);
 	}

@@ -26,13 +26,17 @@ import ghidra.dbg.target.schema.*;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
 
-@TargetObjectSchemaInfo(name = "TargetSectionContainer", elements = { //
-	@TargetElementType(type = JdiModelTargetSection.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "TargetSectionContainer",
+	elements = {
+		@TargetElementType(type = JdiModelTargetSection.class)
+	},
+	attributes = {
+		@TargetAttributeType(type = Void.class)
+	},
+	canonicalContainer = true)
 public class JdiModelTargetSectionContainer extends JdiModelTargetObjectImpl
-		implements TargetMemory<JdiModelTargetSectionContainer> {
+		implements TargetMemory {
 
 	protected final JdiModelTargetReferenceType reftype;
 
@@ -121,12 +125,12 @@ public class JdiModelTargetSectionContainer extends JdiModelTargetObjectImpl
 					bytes[i] = (byte) 0xFF;
 				}
 			}
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, bytes);
+			listeners.fire.memoryUpdated(this, address, bytes);
 			return CompletableFuture.completedFuture(bytes);
 		}
 		if (addressSpace.equals(impl.getAddressSpace("constantPool"))) {
 			byte[] bytes = constantPool.getPool();
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, bytes);
+			listeners.fire.memoryUpdated(this, address, bytes);
 			return CompletableFuture.completedFuture(bytes);
 		}
 		throw new RuntimeException();

@@ -15,31 +15,30 @@
  */
 package agent.dbgeng.model.iface2;
 
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import agent.dbgeng.dbgeng.DebugClient.DebugOutputFlags;
 import agent.dbgeng.dbgeng.DebugSessionId;
 import agent.dbgeng.manager.DbgEventsListenerAdapter;
 import agent.dbgeng.manager.DbgSession;
-import agent.dbgeng.manager.cmd.DbgSessionSelectCommand;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.iface1.*;
 import ghidra.dbg.target.TargetAggregate;
 import ghidra.dbg.target.TargetConsole;
 import ghidra.dbg.target.TargetConsole.Channel;
-import ghidra.dbg.target.TargetFocusScope.TargetFocusScopeListener;
 import ghidra.dbg.util.PathUtils;
 
 public interface DbgModelTargetSession extends //
-		DbgModelTargetAccessConditioned<DbgModelTargetSession>, //
-		//DbgModelTargetFocusScope<DbgModelTargetSession>, //
-		DbgModelTargetExecutionStateful<DbgModelTargetSession>, //
-		DbgModelTargetInterpreter<DbgModelTargetSession>, //
-		DbgModelTargetInterruptible<DbgModelTargetSession>, //
-		DbgModelTargetResumable<DbgModelTargetSession>, //
+		DbgModelTargetAccessConditioned, //
+		//DbgModelTargetFocusScope, //
+		DbgModelTargetExecutionStateful, //
+		DbgModelTargetInterpreter, //
+		DbgModelTargetInterruptible, //
+		DbgModelTargetResumable, //
 		DbgEventsListenerAdapter, //
 		DbgModelSelectableObject, //
-		TargetFocusScopeListener, //
 		TargetAggregate {
 
 	DbgModelTargetProcessContainer getProcesses();
@@ -70,16 +69,23 @@ public interface DbgModelTargetSession extends //
 		if (output.contains("loaded *kernel* extension dll for usermode")) {
 			return;
 		}
-		getListeners().fire(TargetInterpreterListener.class).consoleOutput(this, chan, output);
+		getListeners().fire.consoleOutput(getProxy(), chan, output);
 	}
 
 	@Override
-	public default CompletableFuture<Void> select() {
+	public default void promptChanged(String prompt) {
+		changeAttributes(List.of(), Map.of( //
+			PROMPT_ATTRIBUTE_NAME, prompt //
+		), "Refreshed");
+	}
+
+	@Override
+	public default CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
 		DbgSession session = getSession();
 		if (session == null) {
 			session = manager.getEventSession();
 		}
-		return manager.execute(new DbgSessionSelectCommand(manager, session));
+		return manager.setActiveSession(session);
 	}
 }

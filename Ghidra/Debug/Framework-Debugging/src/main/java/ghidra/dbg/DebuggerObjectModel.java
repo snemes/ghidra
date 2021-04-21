@@ -15,18 +15,19 @@
  */
 package ghidra.dbg;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Predicate;
 
 import ghidra.async.AsyncUtils;
 import ghidra.async.TypeSpec;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.error.*;
 import ghidra.dbg.target.TargetMemory;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.EnumerableTargetObjectSchema;
 import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.target.schema.TargetObjectSchema.ResyncMode;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.*;
 import ghidra.util.Msg;
@@ -145,9 +146,27 @@ public interface DebuggerObjectModel {
 	/**
 	 * Add a listener for model events
 	 * 
+	 * <p>
+	 * If requested, the listener is notified of existing objects via an event replay. It will first
+	 * replay all the created events in the same order they were originally emitted. Any objects
+	 * which have since been invalidated are excluded in the replay. They don't exist anymore, after
+	 * all. Next it will replay the attribute- and element-added events in post order. This is an
+	 * attempt to ensure an object's dependencies are met by the time the client receives its added
+	 * event. This isn't always possible due to cycles, but such cycles are usually informational.
+	 * 
+	 * @param listener the listener
+	 * @param replay true to replay object tree events (doesn't include register or memory caches)
+	 */
+	public void addModelListener(DebuggerModelListener listener, boolean replay);
+
+	/**
+	 * Add a listener for model events, without replay
+	 * 
 	 * @param listener the listener
 	 */
-	public void addModelListener(DebuggerModelListener listener);
+	public default void addModelListener(DebuggerModelListener listener) {
+		addModelListener(listener, false);
+	}
 
 	/**
 	 * Remove a model event listener
@@ -205,35 +224,16 @@ public interface DebuggerObjectModel {
 	 * 
 	 * @param <T> the required implementation-specific type
 	 * @param cls the class for the required type
-	 * @param ref the reference (or object) to check
+	 * @param obj the object to check
 	 * @return the object, cast to the desired typed
-	 * @throws IllegalArgumentException if -ref- does not belong to this model
+	 * @throws DebuggerIllegalArgumentException if {@code obj} does not belong to this model
 	 */
-	default <T extends TargetObjectRef> T assertMine(Class<T> cls, TargetObjectRef ref) {
-		if (ref.getModel() != this) {
-			throw new IllegalArgumentException(
-				"TargetObject (or ref)" + ref + " does not belong to this model");
+	default <T extends TargetObject> T assertMine(Class<T> cls, TargetObject obj) {
+		if (obj.getModel() != this) {
+			throw new DebuggerIllegalArgumentException(
+				"TargetObject " + obj + " does not belong to this model");
 		}
-		return cls.cast(ref);
-	}
-
-	/**
-	 * Create a reference to the given path in this model
-	 * 
-	 * <p>
-	 * Note that the path is not checked until the object is fetched. Thus, it is possible for a
-	 * reference to refer to a non-existent object.
-	 * 
-	 * @param path the path of the object
-	 * @return a reference to the object
-	 */
-	public TargetObjectRef createRef(List<String> path);
-
-	/**
-	 * @see #createRef(List)
-	 */
-	public default TargetObjectRef createRef(String... path) {
-		return createRef(List.of(path));
+		return cls.cast(obj);
 	}
 
 	/**
@@ -279,7 +279,7 @@ public interface DebuggerObjectModel {
 	 * @param refresh true to invalidate caches involved in handling this request
 	 * @return a future map of elements
 	 */
-	public CompletableFuture<? extends Map<String, ? extends TargetObjectRef>> fetchObjectElements(
+	public CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchObjectElements(
 			List<String> path, boolean refresh);
 
 	/**
@@ -287,7 +287,7 @@ public interface DebuggerObjectModel {
 	 * 
 	 * @see #fetchObjectElements(List, boolean)
 	 */
-	public default CompletableFuture<? extends Map<String, ? extends TargetObjectRef>> fetchObjectElements(
+	public default CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchObjectElements(
 			List<String> path) {
 		return fetchObjectElements(path, false);
 	}
@@ -295,7 +295,7 @@ public interface DebuggerObjectModel {
 	/**
 	 * @see #fetchObjectElements(List)
 	 */
-	public default CompletableFuture<? extends Map<String, ? extends TargetObjectRef>> fetchObjectElements(
+	public default CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchObjectElements(
 			String... path) {
 		return fetchObjectElements(List.of(path));
 	}
@@ -305,11 +305,21 @@ public interface DebuggerObjectModel {
 	 * 
 	 * <p>
 	 * The root is a virtual object to contain all the top-level objects of the model tree. This
-	 * object represents the debugger itself.
+	 * object represents the debugger itself. Note in most cases {@link #getModelRoot()} is
+	 * sufficient; however, if you've just created the model, it is prudent to wait for it to create
+	 * its root. For asynchronous cases, just listen for the root-creation and -added events. This
+	 * method returns a future which completes after the root-added event.
 	 * 
-	 * @return the root
+	 * @return a future which completes with the root
 	 */
 	public CompletableFuture<? extends TargetObject> fetchModelRoot();
+
+	/**
+	 * Get the root object of the model
+	 * 
+	 * @return the root or {@code null} if it hasn't been created, yet
+	 */
+	public TargetObject getModelRoot();
 
 	/**
 	 * Fetch the value at the given path
@@ -362,6 +372,38 @@ public interface DebuggerObjectModel {
 	}
 
 	/**
+	 * Get the value at a given path
+	 * 
+	 * <p>
+	 * If the path does not exist, null is returned. Note that an attempt to access the child of a
+	 * primitive is the same as accessing a path that does not exist; however, an error will be
+	 * logged, since this typically indicates a programming error.
+	 * 
+	 * @param path the path
+	 * @return the value
+	 */
+	public default Object getModelValue(List<String> path) {
+		Object cur = getModelRoot();
+		for (String key : path) {
+			if (cur == null) {
+				return null;
+			}
+			if (!(cur instanceof TargetObject)) {
+				Msg.error(this, "Primitive " + cur + " cannot have child '" + key + "'");
+				return null;
+			}
+			TargetObject obj = (TargetObject) cur;
+			if (PathUtils.isIndex(key)) {
+				cur = obj.getCachedElements().get(PathUtils.parseIndex(key));
+				continue;
+			}
+			assert PathUtils.isName(key);
+			cur = obj.getCachedAttribute(key);
+		}
+		return cur;
+	}
+
+	/**
 	 * Fetch the object with the given path
 	 * 
 	 * <p>
@@ -374,33 +416,71 @@ public interface DebuggerObjectModel {
 	 */
 	public default CompletableFuture<? extends TargetObject> fetchModelObject(List<String> path,
 			boolean refresh) {
-		return fetchModelValue(path, refresh).thenCompose(v -> {
+		return fetchModelValue(path, refresh).thenApply(v -> {
 			if (v == null) {
-				return AsyncUtils.nil();
+				return null;
 			}
-			if (!(v instanceof TargetObjectRef)) {
-				throw DebuggerModelTypeException.typeRequired(v, path, TargetObjectRef.class);
-			}
-			TargetObjectRef ref = (TargetObjectRef) v;
-			if (path.equals(ref.getPath()) && !(v instanceof TargetObject)) {
+			if (!(v instanceof TargetObject)) {
 				throw DebuggerModelTypeException.typeRequired(v, path, TargetObject.class);
 			}
-			return ref.fetch();
+			return (TargetObject) v;
 		});
 	}
 
 	/**
-	 * @see #fetchModelObject(List)
+	 * Get an object from the model, resyncing according to the schema
+	 * 
+	 * <p>
+	 * This is necessary when an object in the path has a resync mode other than
+	 * {@link ResyncMode#NEVER} for the child being retrieved. Please note that some synchronization
+	 * may still be required on the client side, since accessing the object before it is created
+	 * will cause a {@code null} completion.
+	 * 
+	 * @return a future that completes with the object or with {@code null} if it doesn't exist
 	 */
+	@Deprecated
 	public default CompletableFuture<? extends TargetObject> fetchModelObject(List<String> path) {
 		return fetchModelObject(path, false);
 	}
 
 	/**
+	 * Get an object from the model
+	 * 
+	 * <p>
+	 * Note this may return an object which is still being constructed, i.e., between being created
+	 * and being added to the model. This differs from {@link #getModelValue(List)}, which will only
+	 * return an object after it has been added. This method also never follows links.
+	 * 
+	 * @param path the path of the object
+	 * @return the object or {@code null} if it doesn't exist
+	 */
+	public TargetObject getModelObject(List<String> path);
+
+	/**
+	 * Get all created objects matching a given predicate
+	 * 
+	 * <p>
+	 * Note the predicate is executed while holding an internal model-wide lock. Be careful and keep
+	 * it simple.
+	 * 
+	 * @param predicate the predicate
+	 * @return the set of matching objects
+	 */
+	public Set<TargetObject> getModelObjects(Predicate<? super TargetObject> predicate);
+
+	/**
 	 * @see #fetchModelObject(List)
 	 */
+	@Deprecated
 	public default CompletableFuture<? extends TargetObject> fetchModelObject(String... path) {
 		return fetchModelObject(List.of(path));
+	}
+
+	/**
+	 * @see #getModelObject(List)
+	 */
+	public default TargetObject getModelObject(String... path) {
+		return getModelObject(List.of(path));
 	}
 
 	/**
@@ -497,8 +577,23 @@ public interface DebuggerObjectModel {
 		if (ex == null || DebuggerModelTerminatingException.isIgnorable(ex)) {
 			Msg.warn(origin, message + ": " + ex);
 		}
+		else if (AsyncUtils.unwrapThrowable(ex) instanceof RejectedExecutionException) {
+			Msg.trace(origin, "Ignoring rejection", ex);
+		}
 		else {
 			Msg.error(origin, message, ex);
 		}
 	}
+
+	/**
+	 * Permit all callbacks to be invoked before proceeding
+	 * 
+	 * <p>
+	 * This operates by placing the request into the queue itself, so that any event callbacks
+	 * queued <em>at the time of the flush invocation</em> are completed first. There are no
+	 * guarantees with respect to events which get queued <em>after the flush invocation</em>.
+	 * 
+	 * @return a future which completes when all queued callbacks have been invoked
+	 */
+	CompletableFuture<Void> flushEvents();
 }

@@ -27,18 +27,20 @@ import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.*;
-import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "Module", elements = {
-	@TargetElementType(type = Void.class)
-}, attributes = {
-	@TargetAttributeType(type = Void.class)
-})
-public class GdbModelTargetModule
-		extends DefaultTargetObject<TargetObject, GdbModelTargetModuleContainer>
-		implements TargetModule<GdbModelTargetModule> {
+@TargetObjectSchemaInfo(
+	name = "Module",
+	elements = { //
+		@TargetElementType(type = Void.class) //
+	},
+	attributes = { // 
+		@TargetAttributeType(type = Void.class) //
+	})
+public class GdbModelTargetModule extends
+		DefaultTargetObject<TargetObject, GdbModelTargetModuleContainer> implements TargetModule {
 
 	public static final String VISIBLE_RANGE_ATTRIBUTE_NAME = "range";
+	public static final String VISIBLE_MODULE_NAME_ATTRIBUTE_NAME = "module name";
 
 	protected static String indexModule(GdbModule module) {
 		return module.getName();
@@ -63,27 +65,26 @@ public class GdbModelTargetModule
 		this.impl = modules.impl;
 		this.inferior = modules.inferior;
 		this.module = module;
+		impl.addModelObject(module, this);
+		impl.addModelObject(module.getName(), this);
 
 		this.sections = new GdbModelTargetSectionContainer(this);
 		this.symbols = new GdbModelTargetSymbolContainer(this);
 
 		range = doGetRange(); // Likely [0,0]
-		changeAttributes(List.of(),
-			List.of(
-				sections,
-				symbols),
-			Map.of(
-				VISIBLE_RANGE_ATTRIBUTE_NAME, range,
-				RANGE_ATTRIBUTE_NAME, range,
-				MODULE_NAME_ATTRIBUTE_NAME, module.getName(),
-				UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED,
-				DISPLAY_ATTRIBUTE_NAME, module.getName()),
-			"Initialized");
+		changeAttributes(List.of(), List.of(sections, symbols), Map.of( //
+			VISIBLE_RANGE_ATTRIBUTE_NAME, range, //
+			VISIBLE_MODULE_NAME_ATTRIBUTE_NAME, module.getName(), //
+			RANGE_ATTRIBUTE_NAME, range, //
+			MODULE_NAME_ATTRIBUTE_NAME, module.getName(), //
+			SHORT_DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
+			DISPLAY_ATTRIBUTE_NAME, getDisplay() //
+		), "Initialized");
 	}
 
 	public CompletableFuture<Void> init() {
 		return sections.requestElements(true).exceptionally(ex -> {
-			Msg.error(this, "Could not initialize module sections and base", ex);
+			impl.reportError(this, "Could not initialize module sections and base", ex);
 			return null;
 		});
 	}
@@ -100,7 +101,12 @@ public class GdbModelTargetModule
 
 	@Override
 	public String getDisplay() {
-		return module.getName();
+		String shortName = module.getName();
+		int sep = shortName.lastIndexOf('/');
+		if (sep > 0 && sep < shortName.length()) {
+			shortName = shortName.substring(sep + 1);
+		}
+		return shortName;
 	}
 
 	protected AddressRange doGetRange() {
@@ -115,10 +121,9 @@ public class GdbModelTargetModule
 	}
 
 	public void sectionsRefreshed() {
-		AddressRange range = doGetRange();
-		changeAttributes(List.of(), Map.of(
-			RANGE_ATTRIBUTE_NAME, range,
-			VISIBLE_RANGE_ATTRIBUTE_NAME, range),
+		range = doGetRange();
+		changeAttributes(List.of(),
+			Map.of(RANGE_ATTRIBUTE_NAME, range, VISIBLE_RANGE_ATTRIBUTE_NAME, range),
 			"Sections Refreshed");
 	}
 
@@ -133,4 +138,10 @@ public class GdbModelTargetModule
 	public AddressRange getVisibleRange() {
 		return range;
 	}
+
+	@TargetAttributeType(name = VISIBLE_MODULE_NAME_ATTRIBUTE_NAME)
+	public String getVisibleModuleName() {
+		return module.getName();
+	}
+
 }

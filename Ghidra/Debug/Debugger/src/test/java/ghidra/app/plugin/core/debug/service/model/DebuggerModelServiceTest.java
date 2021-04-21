@@ -33,8 +33,7 @@ import ghidra.dbg.DebuggerModelFactory;
 import ghidra.dbg.DebuggerObjectModel;
 import ghidra.dbg.model.TestDebuggerObjectModel;
 import ghidra.dbg.model.TestLocalDebuggerModelFactory;
-import ghidra.dbg.util.PathMatcher;
-import ghidra.dbg.util.PathUtils;
+import ghidra.dbg.testutil.DebuggerModelTestUtils;
 import ghidra.trace.model.Trace;
 import ghidra.trace.model.thread.TraceThread;
 import ghidra.util.SystemUtilities;
@@ -45,28 +44,13 @@ import mockit.VerificationsInOrder;
 /**
  * TODO: Cover the error cases, and cases where {@code null} is expected
  * 
+ * <p>
  * TODO: Cover cases where multiple recorders are present
  */
-public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITest {
+public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITest
+		implements DebuggerModelTestUtils {
 	protected static final long TIMEOUT_MILLIS =
 		SystemUtilities.isInTestingBatchMode() ? 5000 : Long.MAX_VALUE;
-
-	public static void addTestModelPathPatterns() {
-		PathMatcher m = DefaultTraceRecorder.HARDCODED_MATCHER;
-		m.addPattern(PathUtils.parse("Processes[]"));
-		m.addPattern(PathUtils.parse("Processes[].Breakpoints[]"));
-		m.addPattern(PathUtils.parse("Processes[].Memory[]"));
-		m.addPattern(PathUtils.parse("Processes[].Modules[]"));
-		m.addPattern(PathUtils.parse("Processes[].Registers[]"));
-		m.addPattern(PathUtils.parse("Processes[].Threads[]"));
-		m.addPattern(PathUtils.parse("Processes[].Threads[].RegisterBank"));
-		m.addPattern(PathUtils.parse("Processes[].Threads[].Stack[]"));
-		m.addPattern(PathUtils.parse("Processes[].Threads[].Stack[].RegisterBank"));
-	}
-
-	static {
-		addTestModelPathPatterns();
-	}
 
 	/**
 	 * Exists just for mocking, because jmockit does Bad Things (TM) to
@@ -84,8 +68,7 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 		void elementRemoved(E element);
 	}
 
-	static class CollectionChangeDelegateWrapper<E>
-			implements CollectionChangeListener<E> {
+	static class CollectionChangeDelegateWrapper<E> implements CollectionChangeListener<E> {
 		protected final CollectionChangeDelegate<E> delegate;
 
 		public CollectionChangeDelegateWrapper(CollectionChangeDelegate<E> delegate) {
@@ -241,7 +224,9 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 		CollectionChangeDelegateWrapper<TraceRecorder> wrapper =
 			new CollectionChangeDelegateWrapper<>(recorderChangeListener);
 		modelService.addTraceRecordersChangedListener(wrapper);
+		Trace trace = recorder.getTrace();
 		recorder.stopRecording();
+		waitForDomainObject(trace);
 
 		new VerificationsInOrder() {
 			{
@@ -266,20 +251,23 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 	}
 
 	@Test
-	public void testRecordThenCloseStopsRecording() throws Exception {
+	public void testRecordThenCloseStopsRecording() throws Throwable {
 		createTestModel();
 		mb.createTestProcessesAndThreads();
 
 		TraceRecorder recorder = modelService.recordTarget(mb.testProcess1,
 			new TestDebuggerTargetTraceMapper(mb.testProcess1));
+		assertNotNull(recorder);
+		waitOn(recorder.init()); // Already initializing, just wait for it to complete
 
-		CompletableFuture<Void> disconnect = mb.testModel.close();
-		disconnect.get();
-		waitForCondition(() -> !recorder.isRecording(), "Still recording");
+		waitOn(mb.testModel.close());
+		waitForPass(() -> {
+			assertFalse("Still recording", recorder.isRecording());
+		});
 	}
 
 	@Test
-	public void testRecordAndOpenThenCloseModelAndTraceLeavesNoConsumers() throws Exception {
+	public void testRecordAndOpenThenCloseModelAndTraceLeavesNoConsumers() throws Throwable {
 		createTestModel();
 		mb.createTestProcessesAndThreads();
 
@@ -291,9 +279,10 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 		assertNotNull("No active trace", trace);
 
 		traceManager.closeTrace(trace);
-		CompletableFuture<Void> disconnect = mb.testModel.close();
-		disconnect.get();
-		assertEquals(List.of(), trace.getConsumerList());
+		waitOn(mb.testModel.close());
+		waitForPass(() -> {
+			assertEquals(List.of(), trace.getConsumerList());
+		});
 	}
 
 	@Test
@@ -359,7 +348,13 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 
 		TraceThread traceThread = Unique.assertOne(
 			recorder.getTrace().getThreadManager().getThreadsByPath("Processes[1].Threads[1]"));
-		assertEquals(mb.testThread1, modelService.getTargetThread(traceThread));
+		/**
+		 * There's a brief period where the trace thread exists, but it hasn't been entered into the
+		 * recorder's internal map, yet. So, we have to wait.
+		 */
+		waitForPass(() -> {
+			assertEquals(mb.testThread1, modelService.getTargetThread(traceThread));
+		});
 	}
 
 	protected void doTestGetTraceThread(Runnable preRec, Runnable postRec) throws Exception {
@@ -429,7 +424,7 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 	}
 
 	@Test
-	public void testTargetFocus() throws Exception {
+	public void testTargetFocus() throws Throwable {
 		createTestModel();
 		mb.createTestProcessesAndThreads();
 
@@ -442,19 +437,19 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 		assertNull(modelService.getTargetFocus(mb.testProcess1));
 		assertNull(modelService.getTargetFocus(mb.testProcess3));
 
-		mb.testModel.requestFocus(mb.testThread1);
+		waitOn(mb.testModel.requestFocus(mb.testThread1));
 		assertEquals(mb.testThread1, modelService.getTargetFocus(mb.testProcess1));
 		assertNull(modelService.getTargetFocus(mb.testProcess3));
 
-		mb.testModel.requestFocus(mb.testThread2);
+		waitOn(mb.testModel.requestFocus(mb.testThread2));
 		assertEquals(mb.testThread2, modelService.getTargetFocus(mb.testProcess1));
 		assertNull(modelService.getTargetFocus(mb.testProcess3));
 
-		mb.testModel.requestFocus(mb.testThread3);
+		waitOn(mb.testModel.requestFocus(mb.testThread3));
 		assertEquals(mb.testThread2, modelService.getTargetFocus(mb.testProcess1));
 		assertEquals(mb.testThread3, modelService.getTargetFocus(mb.testProcess3));
 
-		mb.testModel.requestFocus(mb.testThread4);
+		waitOn(mb.testModel.requestFocus(mb.testThread4));
 		assertEquals(mb.testThread2, modelService.getTargetFocus(mb.testProcess1));
 		assertEquals(mb.testThread4, modelService.getTargetFocus(mb.testProcess3));
 	}
@@ -479,18 +474,18 @@ public class DebuggerModelServiceTest extends AbstractGhidraHeadedDebuggerGUITes
 			focusEvents.take().get(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
 		ModelObjectFocusedPluginEvent evt2 =
 			focusEvents.take().get(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
-		assertEquals(mb.testThread1, evt1.getFocusRef());
-		assertEquals(mb.testThread2, evt2.getFocusRef());
+		assertEquals(mb.testThread1, evt1.getFocus());
+		assertEquals(mb.testThread2, evt2.getFocus());
 	}
 
 	@Test
-	public void testCurrentModelNullAfterClose() throws Exception {
+	public void testCurrentModelNullAfterClose() throws Throwable {
 		createTestModel();
 
 		modelService.activateModel(mb.testModel);
 		assertEquals(mb.testModel, modelService.getCurrentModel());
 
-		mb.testModel.close();
+		waitOn(mb.testModel.close());
 		assertNull(modelService.getCurrentModel());
 	}
 }

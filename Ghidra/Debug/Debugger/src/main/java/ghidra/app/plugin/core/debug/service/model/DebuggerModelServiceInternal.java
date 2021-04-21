@@ -17,14 +17,12 @@ package ghidra.app.plugin.core.debug.service.model;
 
 import java.io.IOException;
 import java.util.Collection;
-import java.util.concurrent.CompletableFuture;
 
 import ghidra.app.plugin.core.debug.event.*;
 import ghidra.app.plugin.core.debug.mapping.DebuggerTargetTraceMapper;
 import ghidra.app.services.*;
 import ghidra.dbg.DebuggerModelFactory;
 import ghidra.dbg.DebuggerObjectModel;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.TargetObject;
 import ghidra.framework.plugintool.PluginEvent;
 import ghidra.framework.plugintool.PluginTool;
@@ -96,8 +94,9 @@ public interface DebuggerModelServiceInternal extends DebuggerModelService {
 	 * 
 	 * @param focused the focused object
 	 */
-	default void fireFocusEvent(TargetObjectRef focused) {
-		firePluginEvent(new ModelObjectFocusedPluginEvent(getName(), focused));
+	default void fireFocusEvent(TargetObject focused) {
+		Swing.runIfSwingOrRunLater(
+			() -> firePluginEvent(new ModelObjectFocusedPluginEvent(getName(), focused)));
 	}
 
 	/**
@@ -133,5 +132,5 @@ public interface DebuggerModelServiceInternal extends DebuggerModelService {
 	 * @param target the target to record
 	 * @return a future which completes with the resulting recorder, unless cancelled
 	 */
-	CompletableFuture<TraceRecorder> doRecordTargetPromptOffers(PluginTool t, TargetObject target);
+	TraceRecorder doRecordTargetPromptOffers(PluginTool t, TargetObject target);
 }

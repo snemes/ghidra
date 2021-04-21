@@ -29,7 +29,6 @@ import com.google.common.collect.Range;
 
 import docking.widgets.EventTrigger;
 import ghidra.app.plugin.core.debug.gui.AbstractGhidraHeadedDebuggerGUITest;
-import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceTest;
 import ghidra.app.services.TraceRecorder;
 import ghidra.trace.model.Trace;
 import ghidra.trace.model.thread.TraceThread;
@@ -39,9 +38,6 @@ import ghidra.trace.model.time.TraceTimeManager;
 import ghidra.util.database.UndoableTransaction;
 
 public class DebuggerThreadsProviderTest extends AbstractGhidraHeadedDebuggerGUITest {
-	static {
-		DebuggerModelServiceTest.addTestModelPathPatterns();
-	}
 
 	protected DebuggerThreadsPlugin threadsPlugin;
 	protected DebuggerThreadsProvider threadsProvider;
@@ -448,28 +444,28 @@ public class DebuggerThreadsProviderTest extends AbstractGhidraHeadedDebuggerGUI
 
 	@Test
 	public void testActionStepTraceBackward() throws Exception {
-		assertFalse(threadsProvider.actionStepTraceBackward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapBackward.isEnabled());
 
 		createAndOpenTrace();
 		addThreads();
 		traceManager.activateTrace(tb.trace);
 		waitForSwing();
 
-		assertFalse(threadsProvider.actionStepTraceBackward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapBackward.isEnabled());
 
 		try (UndoableTransaction tid = tb.startTransaction()) {
 			tb.trace.getTimeManager().getSnapshot(10, true);
 		}
 		waitForDomainObject(tb.trace);
 
-		assertFalse(threadsProvider.actionStepTraceBackward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapBackward.isEnabled());
 
 		traceManager.activateSnap(2);
 		waitForSwing();
 
-		assertTrue(threadsProvider.actionStepTraceBackward.isEnabled());
+		assertTrue(threadsProvider.actionStepSnapBackward.isEnabled());
 
-		performAction(threadsProvider.actionStepTraceBackward);
+		performAction(threadsProvider.actionStepSnapBackward);
 		waitForSwing();
 
 		assertEquals(1, traceManager.getCurrentSnap());
@@ -477,32 +473,32 @@ public class DebuggerThreadsProviderTest extends AbstractGhidraHeadedDebuggerGUI
 
 	@Test
 	public void testActionStepTraceForward() throws Exception {
-		assertFalse(threadsProvider.actionStepTraceForward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapForward.isEnabled());
 
 		createAndOpenTrace();
 		addThreads();
 		traceManager.activateTrace(tb.trace);
 		waitForSwing();
 
-		assertFalse(threadsProvider.actionStepTraceForward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapForward.isEnabled());
 
 		try (UndoableTransaction tid = tb.startTransaction()) {
 			tb.trace.getTimeManager().getSnapshot(10, true);
 		}
 		waitForDomainObject(tb.trace);
 
-		assertTrue(threadsProvider.actionStepTraceForward.isEnabled());
+		assertTrue(threadsProvider.actionStepSnapForward.isEnabled());
 
-		performAction(threadsProvider.actionStepTraceForward);
+		performAction(threadsProvider.actionStepSnapForward);
 		waitForSwing();
 
 		assertEquals(1, traceManager.getCurrentSnap());
-		assertTrue(threadsProvider.actionStepTraceForward.isEnabled());
+		assertTrue(threadsProvider.actionStepSnapForward.isEnabled());
 
 		traceManager.activateSnap(10);
 		waitForSwing();
 
-		assertFalse(threadsProvider.actionStepTraceForward.isEnabled());
+		assertFalse(threadsProvider.actionStepSnapForward.isEnabled());
 	}
 
 	@Test

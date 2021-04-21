@@ -130,7 +130,7 @@ public interface DbgEventsListener {
 	 * @param name the name of the module on the target
 	 * @param cause the cause of this event
 	 */
-	void moduleLoaded(DbgProcess process, String name, DbgCause cause);
+	void moduleLoaded(DbgProcess process, DebugModuleInfo info, DbgCause cause);
 
 	/**
 	 * A module has been unloaded from an process
@@ -139,7 +139,7 @@ public interface DbgEventsListener {
 	 * @param name the name of the module on the target
 	 * @param cause the cause of this event
 	 */
-	void moduleUnloaded(DbgProcess process, String name, DbgCause cause);
+	void moduleUnloaded(DbgProcess process, DebugModuleInfo info, DbgCause cause);
 
 	/**
 	 * A breakpoint has been created in the session
@@ -244,4 +244,10 @@ public interface DbgEventsListener {
 	 * @param mask class of output
 	 */
 	void consoleOutput(String output, int mask);
+
+	/**
+	 * @param prompt for console output
+	 */
+	void promptChanged(String prompt);
+
 }

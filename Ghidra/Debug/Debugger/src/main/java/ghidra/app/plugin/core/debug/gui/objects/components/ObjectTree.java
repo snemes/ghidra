@@ -26,6 +26,7 @@ import javax.swing.JComponent;
 import javax.swing.event.TreeExpansionEvent;
 import javax.swing.event.TreeExpansionListener;
 import javax.swing.tree.TreePath;
+import javax.swing.tree.TreeSelectionModel;
 
 import docking.widgets.tree.GTree;
 import docking.widgets.tree.GTreeNode;
@@ -39,9 +40,8 @@ import ghidra.app.services.*;
 import ghidra.async.AsyncUtils;
 import ghidra.async.TypeSpec;
 import ghidra.dbg.DebugModelConventions;
-import ghidra.dbg.attributes.TargetObjectRef;
-import ghidra.dbg.target.*;
-import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibility;
+import ghidra.dbg.target.TargetAccessConditioned;
+import ghidra.dbg.target.TargetObject;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRangeImpl;
 import ghidra.util.*;
@@ -85,6 +85,10 @@ public class ObjectTree implements ObjectPane {
 					TargetObject targetObject = node.getTargetObject();
 					if (targetObject != null && !(targetObject instanceof DummyTargetObject) &&
 						e.getEventOrigin().equals(EventOrigin.USER_GENERATED)) {
+						DebugModelConventions.requestActivation(targetObject).exceptionally(ex -> {
+							Msg.error(this, "Could not activate " + targetObject, ex);
+							return null;
+						});
 						DebugModelConventions.requestFocus(targetObject).exceptionally(ex -> {
 							Msg.error(this, "Could not focus " + targetObject, ex);
 							return null;
@@ -94,10 +98,25 @@ public class ObjectTree implements ObjectPane {
 				provider.getTool().contextChanged(provider);
 				if (e.getEventOrigin() == EventOrigin.INTERNAL_GENERATED) {
 					restoreTreeStateManager.updateLater();
+					return;
 				}
-				else {
-					currentSelectionPaths = tree.getSelectionPaths();
+				TreePath[] selectionPaths = tree.getSelectionPaths();
+				if (e.getEventOrigin() == EventOrigin.API_GENERATED) {
+					if (currentSelectionPaths != null && currentSelectionPaths.length > 0) {
+						if (selectionPaths != null && selectionPaths.length > 0) {
+							TreePath currentPath = currentSelectionPaths[0];
+							TreePath selectedPath = selectionPaths[0];
+							// NB. isDescendant == has a descendent
+							if (selectedPath.isDescendant(currentPath)) {
+								return;
+							}
+						}
+					}
 				}
+				currentSelectionPaths = selectionPaths;
+				currentExpandedPaths = tree.getExpandedPaths();
+				currentViewPosition = tree.getViewPosition();
+				restoreTreeStateManager.updateLater();
 			}
 		});
 		tree.setCellRenderer(new ObjectTreeCellRenderer(root.getProvider()));
@@ -116,23 +135,27 @@ public class ObjectTree implements ObjectPane {
 
 			@Override
 			public void treeExpanded(TreeExpansionEvent event) {
-				currentExpandedPaths = tree.getExpandedPaths();
 				TreePath expandedPath = event.getPath();
 				Object last = expandedPath.getLastPathComponent();
 				if (last instanceof ObjectNode) {
 					ObjectNode node = (ObjectNode) last;
-					node.markExpanded();
+					if (!node.isExpanded()) {
+						//currentExpandedPaths = tree.getExpandedPaths();
+						node.markExpanded();
+					}
 				}
 			}
 
 			@Override
 			public void treeCollapsed(TreeExpansionEvent event) {
-				currentExpandedPaths = tree.getExpandedPaths();
 				TreePath collapsedPath = event.getPath();
 				Object last = collapsedPath.getLastPathComponent();
 				if (last instanceof ObjectNode) {
 					ObjectNode node = (ObjectNode) last;
-					node.markCollapsed();
+					if (node.isExpanded()) {
+						//currentExpandedPaths = tree.getExpandedPaths();
+						node.markCollapsed();
+					}
 				}
 			}
 		});
@@ -146,6 +169,7 @@ public class ObjectTree implements ObjectPane {
 			}
 		});
 
+		tree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
 		tree.setSelectedNode(root);
 	}
 
@@ -209,10 +233,19 @@ public class ObjectTree implements ObjectPane {
 	}
 
 	@Override
-	public void signalDataChange(ObjectContainer container) {
+	public void signalContentsChanged(ObjectContainer container) {
+		ObjectNode node = nodeMap.get(path(container));
+		if (node != null) {
+			node.callUpdate();
+		}
+	}
+
+	@Override
+	public void signalDataChanged(ObjectContainer container) {
 		Swing.runIfSwingOrRunLater(() -> {
 			ObjectNode node = nodeMap.get(path(container));
 			if (node != null) {
+				node.setContainer(this, container.getParent(), container);
 				node.fireNodeChanged(node.getParent(), node);
 			}
 		});
@@ -220,7 +253,7 @@ public class ObjectTree implements ObjectPane {
 
 	@Override
 	public void signalUpdate(ObjectContainer container) {
-		AtomicReference<TargetAccessConditioned<?>> access = new AtomicReference<>();
+		AtomicReference<TargetAccessConditioned> access = new AtomicReference<>();
 		TargetObject targetObject = container.getTargetObject();
 		if (targetObject == null) {
 			return;
@@ -230,10 +263,9 @@ public class ObjectTree implements ObjectPane {
 					.handle(seq::next);
 		}, access).then(seq -> {
 			boolean accessible = true;
-			TargetAccessConditioned<?> conditioned = access.get();
+			TargetAccessConditioned conditioned = access.get();
 			if (conditioned != null) {
-				TargetAccessibility accessibility = conditioned.getAccessibility();
-				accessible = accessibility.equals(TargetAccessibility.ACCESSIBLE);
+				accessible = conditioned.isAccessible();
 			}
 			if (accessible) {
 				Swing.runIfSwingOrRunLater(() -> {
@@ -288,13 +320,16 @@ public class ObjectTree implements ObjectPane {
 	public List<GTreeNode> update(ObjectContainer container) {
 		ObjectNode node = nodeMap.get(path(container));
 		if (node == null) {
-			System.err.println("Missing node: " + path(container));
+			if (path(container) != null) {
+				Msg.warn(this, "Missing node: " + path(container));
+			}
 			return new ArrayList<>();
 		}
 
 		Set<ObjectContainer> currentChildren = container.getCurrentChildren();
 		List<GTreeNode> childList = new ArrayList<GTreeNode>();
 
+		node.setRestructured(false);
 		for (ObjectContainer c : currentChildren) {
 			ObjectNode nc;
 			String path = path(c);
@@ -305,6 +340,7 @@ public class ObjectTree implements ObjectPane {
 					nc.setContainer(this, container, c);
 				}
 				else {
+					node.setRestructured(true);
 					nc = new ObjectNode(this, container, c);
 				}
 				childList.add(nc);
@@ -323,13 +359,9 @@ public class ObjectTree implements ObjectPane {
 	}
 
 	@Override
-	public void setFocus(TargetFocusScope<?> object, TargetObjectRef focused) {
+	public void setFocus(TargetObject object, TargetObject focused) {
 		Swing.runIfSwingOrRunLater(() -> {
 			List<String> path = focused.getPath();
-			ObjectContainer container = getProvider().getContainerByPath(path);
-			if (container != null) {
-				container.subscribe();
-			}
 			tree.setSelectedNodeByNamePath(addRootNameToPath(path));
 		});
 	}
@@ -370,13 +402,16 @@ public class ObjectTree implements ObjectPane {
 		DebuggerObjectsProvider provider = getProvider();
 		ObjectContainer oc = node.getContainer();
 		provider.deleteFromMap(oc);
-		oc.getTargetObject().removeListener(provider);
+		oc.getTargetObject().removeListener(provider.getListener());
 		nodeMap.remove(path(node.getContainer()));
 	}
 
 	protected void navigateToSelectedObject() {
 		if (listingService != null) {
 			TargetObject selectedObject = getSelectedObject();
+			if (selectedObject == null) {
+				return;
+			}
 			Object value = selectedObject.getCachedAttribute(TargetObject.VALUE_ATTRIBUTE_NAME);
 			Address addr = null;
 			if (value instanceof Address) {
@@ -398,5 +433,4 @@ public class ObjectTree implements ObjectPane {
 			}
 		}
 	}
-
 }

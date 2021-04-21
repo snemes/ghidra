@@ -28,10 +28,10 @@ import com.google.common.collect.RangeSet;
 import agent.dbgeng.dbgeng.*;
 import agent.dbgeng.dbgeng.DebugClient.DebugAttachFlags;
 import agent.dbgeng.manager.*;
+import agent.dbgeng.manager.DbgManager.ExecSuffix;
 import agent.dbgeng.manager.cmd.*;
 import ghidra.async.TypeSpec;
 import ghidra.comm.util.BitmaskSet;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
 import ghidra.dbg.target.TargetAttachable;
 import ghidra.util.Msg;
 
@@ -109,7 +109,7 @@ public class DbgProcessImpl implements DbgProcess {
 	 */
 	public void add() {
 		manager.processes.put(id, this);
-		manager.getEventListeners().fire.processAdded(this, DbgCause.Causes.UNCLAIMED);
+		//manager.getEventListeners().fire.processAdded(this, DbgCause.Causes.UNCLAIMED);
 		//manager.addProcess(this, cause);
 	}
 
@@ -168,11 +168,11 @@ public class DbgProcessImpl implements DbgProcess {
 	 * @param module the thread to add
 	 */
 	public void addModule(DbgModuleImpl module) {
-		DbgModuleImpl exists = modules.get(module.getName());
+		DbgModuleImpl exists = modules.get(module.getInfo().toString());
 		if (exists != null) {
 			throw new IllegalArgumentException("There is already module " + exists);
 		}
-		modules.put(module.getName(), module);
+		modules.put(module.getInfo().toString(), module);
 
 	}
 
@@ -231,14 +231,14 @@ public class DbgProcessImpl implements DbgProcess {
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
-		return manager.execute(new DbgProcessSelectCommand(manager, this));
+	public CompletableFuture<Void> setActive() {
+		return manager.setActiveProcess(this);
 	}
 
 	@Override
 	public CompletableFuture<Void> fileExecAndSymbols(String file) {
 		return sequence(TypeSpec.VOID).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(new DbgFileExecAndSymbolsCommand(manager, file)).handle(seq::exit);
 		}).finish();
@@ -247,7 +247,7 @@ public class DbgProcessImpl implements DbgProcess {
 	@Override
 	public CompletableFuture<DbgThread> run() {
 		return sequence(TypeSpec.cls(DbgThread.class)).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(new DbgRunCommand(manager)).handle(seq::exit);
 		}).finish();
@@ -256,7 +256,7 @@ public class DbgProcessImpl implements DbgProcess {
 	@Override
 	public CompletableFuture<Set<DbgThread>> attach(long toPid) {
 		return sequence(TypeSpec.cls(DbgThread.class).set()).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			pid = toPid; // TODO: Wait for successful completion?
 			manager.execute(
@@ -266,10 +266,9 @@ public class DbgProcessImpl implements DbgProcess {
 	}
 
 	@Override
-	public CompletableFuture<Set<DbgThread>> reattach(
-			TypedTargetObjectRef<? extends TargetAttachable<?>> ref) {
+	public CompletableFuture<Set<DbgThread>> reattach(TargetAttachable attachable) {
 		return sequence(TypeSpec.cls(DbgThread.class).set()).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(
 				new DbgAttachCommand(manager, this, BitmaskSet.of(DebugAttachFlags.EXISTING)))
@@ -280,7 +279,7 @@ public class DbgProcessImpl implements DbgProcess {
 	@Override
 	public CompletableFuture<Void> detach() {
 		return sequence(TypeSpec.VOID).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(new DbgDetachCommand(manager, this)).handle(seq::exit);
 		}).finish();
@@ -289,7 +288,7 @@ public class DbgProcessImpl implements DbgProcess {
 	@Override
 	public CompletableFuture<Void> kill() {
 		return sequence(TypeSpec.VOID).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(new DbgKillCommand(manager)).handle(seq::exit);
 		}).finish();
@@ -298,9 +297,27 @@ public class DbgProcessImpl implements DbgProcess {
 	@Override
 	public CompletableFuture<Void> cont() {
 		return sequence(TypeSpec.VOID).then((seq) -> {
-			select().handle(seq::next);
+			setActive().handle(seq::next);
 		}).then((seq) -> {
 			manager.execute(new DbgContinueCommand(manager)).handle(seq::exit);
+		}).finish();
+	}
+
+	@Override
+	public CompletableFuture<Void> step(ExecSuffix suffix) {
+		return sequence(TypeSpec.VOID).then((seq) -> {
+			setActive().handle(seq::next);
+		}).then((seq) -> {
+			manager.execute(new DbgStepCommand(manager, null, suffix)).handle(seq::exit);
+		}).finish();
+	}
+
+	@Override
+	public CompletableFuture<Void> step(Map<String, ?> args) {
+		return sequence(TypeSpec.VOID).then((seq) -> {
+			setActive().handle(seq::next);
+		}).then((seq) -> {
+			manager.execute(new DbgStepCommand(manager, null, args)).handle(seq::exit);
 		}).finish();
 	}
 
@@ -311,7 +328,7 @@ public class DbgProcessImpl implements DbgProcess {
 		if (first.isPresent()) {
 			return viaThread.apply(first.get());
 		}
-		return select().thenCompose(__ -> viaThis.get());
+		return setActive().thenCompose(__ -> viaThis.get());
 	}
 
 	@Override
@@ -334,17 +351,15 @@ public class DbgProcessImpl implements DbgProcess {
 		return null;
 	}
 
-	protected DbgModuleImpl createModule(String name) {
-		return new DbgModuleImpl(manager, this, name);
+	protected void moduleLoaded(DebugModuleInfo info) {
+		if (!modules.containsKey(info.getModuleName())) {
+			DbgModuleImpl module = new DbgModuleImpl(manager, this, info);
+			modules.put(info.toString(), module);
+		}
 	}
 
-	protected void moduleLoaded(String name, DebugModuleInfo info) {
-		DbgModuleImpl module = modules.computeIfAbsent(name, this::createModule);
-		module.setInfo(info);
-	}
-
-	protected void moduleUnloaded(String name) {
-		modules.remove(name);
+	protected void moduleUnloaded(DebugModuleInfo info) {
+		modules.remove(info.toString());
 	}
 
 	protected void threadCreated(DbgThreadImpl thread) {

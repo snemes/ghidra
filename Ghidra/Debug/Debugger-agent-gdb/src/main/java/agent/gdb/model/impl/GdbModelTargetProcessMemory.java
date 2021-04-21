@@ -28,6 +28,8 @@ import com.google.common.collect.Range;
 import agent.gdb.manager.GdbInferior;
 import agent.gdb.manager.impl.GdbMemoryMapping;
 import agent.gdb.manager.impl.cmd.GdbCommandError;
+import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
+import ghidra.async.AsyncFence;
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.error.DebuggerMemoryAccessException;
@@ -38,12 +40,14 @@ import ghidra.program.model.address.*;
 import ghidra.util.Msg;
 import ghidra.util.datastruct.WeakValueHashMap;
 
-@TargetObjectSchemaInfo(name = "Memory", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "Memory",
+	attributes = {
+		@TargetAttributeType(type = Void.class) },
+	canonicalContainer = true)
 public class GdbModelTargetProcessMemory
 		extends DefaultTargetObject<GdbModelTargetMemoryRegion, GdbModelTargetInferior>
-		implements TargetMemory<GdbModelTargetProcessMemory> {
+		implements TargetMemory {
 	public static final String NAME = "Memory";
 
 	protected final GdbModelImpl impl;
@@ -103,7 +107,7 @@ public class GdbModelTargetProcessMemory
 			}
 			byte[] content =
 				Arrays.copyOf(buf.array(), (int) (r.upperEndpoint() - r.lowerEndpoint()));
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, content);
+			listeners.fire.memoryUpdated(this, address, content);
 			return content;
 		}).exceptionally(e -> {
 			e = AsyncUtils.unwrapThrowable(e);
@@ -111,12 +115,10 @@ public class GdbModelTargetProcessMemory
 				GdbCommandError gce = (GdbCommandError) e;
 				e = new DebuggerMemoryAccessException(
 					"Cannot read at " + address + ": " + gce.getInfo().getString("msg"));
-				listeners.fire(TargetMemoryListener.class)
-						.memoryReadError(this, range, (DebuggerMemoryAccessException) e);
+				listeners.fire.memoryReadError(this, range, (DebuggerMemoryAccessException) e);
 			}
 			if (e instanceof DebuggerMemoryAccessException) {
-				listeners.fire(TargetMemoryListener.class)
-						.memoryReadError(this, range, (DebuggerMemoryAccessException) e);
+				listeners.fire.memoryReadError(this, range, (DebuggerMemoryAccessException) e);
 			}
 			return ExceptionUtils.rethrow(e);
 		});
@@ -124,28 +126,20 @@ public class GdbModelTargetProcessMemory
 
 	@Override
 	public CompletableFuture<byte[]> readMemory(Address address, int length) {
-		return doReadMemory(address, address.getOffset(), length);
+		return impl.gateFuture(doReadMemory(address, address.getOffset(), length));
 	}
 
 	@Override
 	public CompletableFuture<Void> writeMemory(Address address, byte[] data) {
-		return inferior.writeMemory(address.getOffset(), ByteBuffer.wrap(data)).thenAccept(__ -> {
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, data);
-		});
+		CompletableFuture<Void> future =
+			inferior.writeMemory(address.getOffset(), ByteBuffer.wrap(data));
+		return impl.gateFuture(future.thenAccept(__ -> {
+			listeners.fire.memoryUpdated(this, address, data);
+		}));
 	}
 
 	protected void invalidateMemoryCaches() {
 		listeners.fire.invalidateCacheRequested(this);
-	}
-
-	protected CompletableFuture<?> update() {
-		if (!isObserved()) {
-			return AsyncUtils.NIL;
-		}
-		return fetchElements(true).exceptionally(e -> {
-			Msg.error(this, "Could not update memory regions " + this + " on STOPPED");
-			return null;
-		});
 	}
 
 	public void memoryChanged(long offset, int len) {
@@ -153,6 +147,16 @@ public class GdbModelTargetProcessMemory
 		doReadMemory(address, offset, len).exceptionally(ex -> {
 			Msg.error(this, "Failed to update memory contents on memory-changed event", ex);
 			return null;
+		});
+	}
+
+	public CompletableFuture<Void> stateChanged(GdbStateChangeRecord sco) {
+		return requestElements(false).thenCompose(__ -> {
+			AsyncFence fence = new AsyncFence();
+			for (GdbModelTargetMemoryRegion modelRegion : regionsByStart.values()) {
+				fence.include(modelRegion.stateChanged(sco));
+			}
+			return fence.ready();
 		});
 	}
 }

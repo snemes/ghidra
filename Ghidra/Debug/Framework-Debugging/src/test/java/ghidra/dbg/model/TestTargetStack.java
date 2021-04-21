@@ -19,21 +19,20 @@ import java.util.ArrayList;
 import java.util.List;
 
 import ghidra.dbg.target.TargetStack;
+import ghidra.program.model.address.Address;
 
-public class TestTargetStack
-		extends DefaultTestTargetObject<TestTargetStackFrame<?>, TestTargetThread>
-		implements TargetStack<TestTargetStack> {
+public class TestTargetStack extends DefaultTestTargetObject<TestTargetStackFrame, TestTargetThread>
+		implements TargetStack {
 
 	public TestTargetStack(TestTargetThread parent) {
 		super(parent, "Stack", "Stack");
 	}
 
-	@SuppressWarnings("unchecked")
-	protected <T extends TestTargetStackFrame<T>> T pushFrame(T frame) {
-		List<TestTargetStackFrame<?>> list = new ArrayList<>((elements.values()));
+	protected <T extends TestTargetStackFrame> T pushFrame(T frame) {
+		List<TestTargetStackFrame> list = new ArrayList<>((elements.values()));
 		list.add(frame);
 		for (int i = list.size() - 1; i > 1; i--) {
-			((T) list.get(i)).setFromFrame((T) list.get(i - 1));
+			list.get(i).setFromFrame(list.get(i - 1));
 		}
 		changeElements(List.of(), List.of(frame), "Pushed test frame");
 		return frame;
@@ -44,8 +43,8 @@ public class TestTargetStack
 	 * 
 	 * @return the "new" highest-indexed frame, into which old data was pushed
 	 */
-	public TestTargetStackFrameHasRegisterBank pushFrameHasBank() {
-		return pushFrame(new TestTargetStackFrameHasRegisterBank(this, elements.size()));
+	public TestTargetStackFrameHasRegisterBank pushFrameHasBank(Address pc) {
+		return pushFrame(new TestTargetStackFrameHasRegisterBank(this, elements.size(), pc));
 	}
 
 	/**
@@ -53,7 +52,7 @@ public class TestTargetStack
 	 * 
 	 * @return the "new" highest-indexed frame, into which old data was pushed
 	 */
-	public TestTargetStackFrameIsRegisterBank pushFrameIsBank() {
-		return pushFrame(new TestTargetStackFrameIsRegisterBank(this, elements.size()));
+	public TestTargetStackFrameIsRegisterBank pushFrameIsBank(Address pc) {
+		return pushFrame(new TestTargetStackFrameIsRegisterBank(this, elements.size(), pc));
 	}
 }

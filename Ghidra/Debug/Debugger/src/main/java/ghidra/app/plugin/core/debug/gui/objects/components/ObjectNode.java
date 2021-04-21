@@ -16,8 +16,7 @@
 package ghidra.app.plugin.core.debug.gui.objects.components;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutionException;
+import java.util.concurrent.*;
 
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
@@ -44,6 +43,7 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 	private String name;
 	private ObjectTree tree;
 	private Set<GTreeNode> oldChildren;
+	private boolean restructured = false;
 
 	public ObjectNode(ObjectTree tree, ObjectContainer parent, ObjectContainer container) {
 		this.tree = tree;
@@ -76,7 +76,6 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 	}
 
 	@Override
-	//public List<GTreeNode> generateChildren() {
 	public List<GTreeNode> generateChildren(TaskMonitor monitor) throws CancelledException {
 
 		if (!container.isImmutable() || isInProgress()) {
@@ -85,17 +84,23 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 				if (cf != null) {
 					// NB: We're allowed to do this because we're guaranteed to be 
 					//   in our own thread by the GTreeSlowLoadingNode
-					ObjectContainer oc = cf.get();
+					ObjectContainer oc = cf.get(60, TimeUnit.SECONDS);
 					return tree.update(oc);
 				}
 			}
 			catch (InterruptedException | ExecutionException e) {
-				// Ignore
 				Msg.warn(this, e);
-				//e.printStackTrace();
+			}
+			catch (TimeoutException e) {
+				Msg.showWarn(this, container.getProvider().getComponent(), "Timeout Exception",
+					"Request for children timed - out - try refreshing the node");
 			}
 		}
-		return new ArrayList<>();
+		List<GTreeNode> list = new ArrayList<>();
+		if (oldChildren != null) {
+			list.addAll(oldChildren);
+		}
+		return list;
 	}
 
 	public DebuggerObjectsProvider getProvider() {
@@ -133,7 +138,7 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 	public Icon getIcon(boolean expanded) {
 		TargetObject targetObject = container.getTargetObject();
 		if (targetObject instanceof TargetExecutionStateful) {
-			TargetExecutionStateful<?> stateful = (TargetExecutionStateful<?>) targetObject;
+			TargetExecutionStateful stateful = (TargetExecutionStateful) targetObject;
 			if (stateful.getExecutionState().equals(TargetExecutionState.RUNNING)) {
 				return ICON_RUNNING;
 			}
@@ -151,16 +156,10 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 		if (provider != null) {
 			ObjectContainer rootContainer = provider.getRoot();
 			Map<String, Object> rootMap = rootContainer.getAttributeMap();
-			String cname = container.getDecoratedName();
-			if (rootMap.containsKey(TargetEventScope.EVENT_PROCESS_ATTRIBUTE_NAME)) {
-				String id = (String) rootMap.get(TargetEventScope.EVENT_PROCESS_ATTRIBUTE_NAME);
-				if (cname.contains("0x" + id)) {
-					return ICON_EVENT;
-				}
-			}
-			if (rootMap.containsKey(TargetEventScope.EVENT_THREAD_ATTRIBUTE_NAME)) {
-				String id = (String) rootMap.get(TargetEventScope.EVENT_THREAD_ATTRIBUTE_NAME);
-				if (cname.contains("0x" + id)) {
+			if (rootMap.containsKey(TargetEventScope.EVENT_OBJECT_ATTRIBUTE_NAME)) {
+				TargetThread targetProcess =
+					(TargetThread) rootMap.get(TargetEventScope.EVENT_OBJECT_ATTRIBUTE_NAME);
+				if (container.getTargetObject().equals(targetProcess)) {
 					return ICON_EVENT;
 				}
 			}
@@ -184,20 +183,58 @@ public class ObjectNode extends GTreeSlowLoadingNode {  //extends GTreeNode
 	}
 
 	public void markExpanded() {
-		container.subscribe();
+		//container.subscribe();
 	}
 
 	public void markCollapsed() {
-		container.unsubscribe();
+		//container.unsubscribe();
 	}
 
 	public void cleanUpOldChildren(List<GTreeNode> newChildren) {
 		if (oldChildren != null) {
-			oldChildren.removeAll(newChildren);
-			for (GTreeNode node : oldChildren) {
-				tree.cleanupOldNode((ObjectNode) node);
+			synchronized (oldChildren) {
+				oldChildren.removeAll(newChildren);
+				for (GTreeNode node : oldChildren) {
+					setRestructured(true);
+					tree.cleanupOldNode((ObjectNode) node);
+				}
 			}
 		}
 		oldChildren = new HashSet<>(newChildren);
 	}
+
+	public void callUpdate() {
+		// NB: this has to be in its own thread
+		CompletableFuture.runAsync(new Runnable() {
+			@Override
+			public void run() {
+				List<GTreeNode> updateNodes = tree.update(container);
+				if (isRestructured()) {
+					setChildren(updateNodes);
+				}
+			}
+		});
+	}
+
+	public void callModified() {
+		// NB: this has to be in its own thread
+		CompletableFuture.runAsync(new Runnable() {
+			@Override
+			public void run() {
+				List<GTreeNode> updateNodes = tree.update(container);
+				for (GTreeNode n : updateNodes) {
+					n.fireNodeChanged(ObjectNode.this, n);
+				}
+			}
+		});
+	}
+
+	public boolean isRestructured() {
+		return restructured;
+	}
+
+	public void setRestructured(boolean restructured) {
+		this.restructured = restructured;
+	}
+
 }

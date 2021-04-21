@@ -25,7 +25,7 @@ import ghidra.dbg.util.PathUtils;
 
 public class TestTargetThread
 		extends DefaultTestTargetObject<TestTargetObject, TestTargetThreadContainer>
-		implements TargetThread<TestTargetThread>, TargetExecutionStateful<TestTargetThread> {
+		implements TargetThread, TargetExecutionStateful {
 	public TestTargetThread(TestTargetThreadContainer parent, int tid) {
 		super(parent, PathUtils.makeKey(PathUtils.makeIndex(tid)), "Thread");
 		changeAttributes(List.of(), List.of(), Map.of(
@@ -58,8 +58,5 @@ public class TestTargetThread
 		Delta<?, ?> delta = changeAttributes(List.of(), List.of(), Map.of(
 			STATE_ATTRIBUTE_NAME, state //
 		), "Changed state");
-		if (delta.added.containsKey(STATE_ATTRIBUTE_NAME)) {
-			listeners.fire(TargetExecutionStateListener.class).executionStateChanged(this, state);
-		}
 	}
 }

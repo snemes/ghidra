@@ -21,8 +21,7 @@ import java.util.stream.Collectors;
 
 import ghidra.app.plugin.core.debug.mapping.DebuggerMemoryMapper;
 import ghidra.app.plugin.core.debug.mapping.DebuggerRegisterMapper;
-import ghidra.app.plugin.core.debug.service.model.DefaultTraceRecorder.ListenerForRecord;
-import ghidra.dbg.attributes.TargetObjectRef;
+import ghidra.app.plugin.core.debug.service.model.TraceEventListener;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetBreakpointSpec.TargetBreakpointKind;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
@@ -37,11 +36,11 @@ import ghidra.trace.model.breakpoint.TraceBreakpointKind;
 import ghidra.trace.model.memory.TraceMemoryRegion;
 import ghidra.trace.model.modules.TraceModule;
 import ghidra.trace.model.modules.TraceSection;
-import ghidra.trace.model.program.TraceProgramView;
 import ghidra.trace.model.stack.TraceStackFrame;
 import ghidra.trace.model.thread.TraceThread;
 import ghidra.trace.model.time.TraceSnapshot;
 import ghidra.trace.model.time.TraceTimeManager;
+import ghidra.util.datastruct.ListenerSet;
 import ghidra.util.task.TaskMonitor;
 
 /**
@@ -76,9 +75,9 @@ public interface TraceRecorder {
 				return TraceBreakpointKind.READ;
 			case WRITE:
 				return TraceBreakpointKind.WRITE;
-			case EXECUTE:
+			case HW_EXECUTE:
 				return TraceBreakpointKind.EXECUTE;
-			case SOFTWARE:
+			case SW_EXECUTE:
 				return TraceBreakpointKind.SOFTWARE;
 			default:
 				throw new AssertionError();
@@ -111,9 +110,9 @@ public interface TraceRecorder {
 			case WRITE:
 				return TargetBreakpointKind.WRITE;
 			case EXECUTE:
-				return TargetBreakpointKind.EXECUTE;
+				return TargetBreakpointKind.HW_EXECUTE;
 			case SOFTWARE:
-				return TargetBreakpointKind.SOFTWARE;
+				return TargetBreakpointKind.SW_EXECUTE;
 			default:
 				throw new AssertionError();
 		}
@@ -184,6 +183,7 @@ public interface TraceRecorder {
 	/**
 	 * Check if recording is active and the given view is at the present
 	 * 
+	 * <p>
 	 * To be at the present means the view's trace and snap matches the recorder's trace and snap.
 	 * The recorder must also be actively recording. Otherwise, this returns {@code false}.
 	 * 
@@ -205,49 +205,47 @@ public interface TraceRecorder {
 	 */
 	void removeListener(TraceRecorderListener listener);
 
-	boolean isViewAtPresent(TraceProgramView view);
+	TargetBreakpointLocation getTargetBreakpoint(TraceBreakpoint bpt);
 
-	TargetBreakpointLocation<?> getTargetBreakpoint(TraceBreakpoint bpt);
+	TraceBreakpoint getTraceBreakpoint(TargetBreakpointLocation bpt);
 
-	TraceBreakpoint getTraceBreakpoint(TargetBreakpointLocation<?> bpt);
+	TargetMemoryRegion getTargetMemoryRegion(TraceMemoryRegion region);
 
-	TargetMemoryRegion<?> getTargetMemoryRegion(TraceMemoryRegion region);
+	TraceMemoryRegion getTraceMemoryRegion(TargetMemoryRegion region);
 
-	TraceMemoryRegion getTraceMemoryRegion(TargetMemoryRegion<?> region);
+	TargetModule getTargetModule(TraceModule module);
 
-	TargetModule<?> getTargetModule(TraceModule module);
+	TraceModule getTraceModule(TargetModule module);
 
-	TraceModule getTraceModule(TargetModule<?> module);
+	TargetSection getTargetSection(TraceSection section);
 
-	TargetSection<?> getTargetSection(TraceSection section);
+	TraceSection getTraceSection(TargetSection section);
 
-	TraceSection getTraceSection(TargetSection<?> section);
+	TargetThread getTargetThread(TraceThread thread);
 
-	TargetThread<?> getTargetThread(TraceThread thread);
-
-	TargetExecutionState getTargetThreadState(TargetThread<?> thread);
+	TargetExecutionState getTargetThreadState(TargetThread thread);
 
 	TargetExecutionState getTargetThreadState(TraceThread thread);
 
-	TargetRegisterBank<?> getTargetRegisterBank(TraceThread thread, int frameLevel);
+	TargetRegisterBank getTargetRegisterBank(TraceThread thread, int frameLevel);
 
-	TraceThread getTraceThread(TargetThread<?> thread);
+	TraceThread getTraceThread(TargetThread thread);
 
-	TraceThread getTraceThreadForSuccessor(TargetObjectRef successor);
+	TraceThread getTraceThreadForSuccessor(TargetObject successor);
 
-	TraceStackFrame getTraceStackFrame(TargetStackFrame<?> frame);
+	TraceStackFrame getTraceStackFrame(TargetStackFrame frame);
 
-	TraceStackFrame getTraceStackFrameForSuccessor(TargetObjectRef successor);
+	TraceStackFrame getTraceStackFrameForSuccessor(TargetObject successor);
 
-	TargetStackFrame<?> getTargetStackFrame(TraceThread thread, int frameLevel);
+	TargetStackFrame getTargetStackFrame(TraceThread thread, int frameLevel);
 
-	Set<TargetThread<?>> getLiveTargetThreads();
+	Set<TargetThread> getLiveTargetThreads();
 
 	DebuggerRegisterMapper getRegisterMapper(TraceThread thread);
 
 	DebuggerMemoryMapper getMemoryMapper();
 
-	boolean isRegisterBankAccessible(TargetRegisterBank<?> bank);
+	boolean isRegisterBankAccessible(TargetRegisterBank bank);
 
 	boolean isRegisterBankAccessible(TraceThread thread, int frameLevel);
 
@@ -269,12 +267,12 @@ public interface TraceRecorder {
 	 * @param thread the trace thread associated with the desired target thread
 	 * @param frameLevel the number of stack frames to "unwind", likely 0
 	 * @param registers the <em>base</em> registers, as viewed by the trace
-	 * @return a future which completes when the registers have been captured.
+	 * @return a future which completes with the captured values
 	 * @throws IllegalArgumentException if no {@link TargetRegisterBank} is known for the given
 	 *             thread
 	 */
-	CompletableFuture<Void> captureThreadRegisters(TraceThread thread, int frameLevel,
-			Set<Register> registers);
+	CompletableFuture<Map<Register, RegisterValue>> captureThreadRegisters(TraceThread thread,
+			int frameLevel, Set<Register> registers);
 
 	/**
 	 * Write a target thread's registers.
@@ -329,9 +327,10 @@ public interface TraceRecorder {
 	 * 
 	 * @param selection the addresses to capture, as viewed in the trace
 	 * @param monitor a monitor for displaying task steps
-	 * @return a future which completes when memory has been captured.
+	 * @return a future which completes with the capture results
 	 */
-	CompletableFuture<Void> captureProcessMemory(AddressSetView selection, TaskMonitor monitor);
+	CompletableFuture<NavigableMap<Address, byte[]>> captureProcessMemory(AddressSetView selection,
+			TaskMonitor monitor);
 
 	/**
 	 * Capture the data types of a target's module.
@@ -359,7 +358,7 @@ public interface TraceRecorder {
 	 * @param monitor a monitor for displaying task steps
 	 * @return a future which completes when the types have been captured.
 	 */
-	CompletableFuture<Void> captureDataTypes(TargetDataTypeNamespace<?> namespace,
+	CompletableFuture<Void> captureDataTypes(TargetDataTypeNamespace namespace,
 			TaskMonitor monitor);
 
 	/**
@@ -388,7 +387,7 @@ public interface TraceRecorder {
 	 * @param monitor a monitor for displaying task steps
 	 * @return a future which completes when the symbols have been captured.
 	 */
-	CompletableFuture<Void> captureSymbols(TargetSymbolNamespace<?> namespace, TaskMonitor monitor);
+	CompletableFuture<Void> captureSymbols(TargetSymbolNamespace namespace, TaskMonitor monitor);
 
 	/**
 	 * Collect breakpoint containers pertinent to the target or a given thread
@@ -408,7 +407,7 @@ public interface TraceRecorder {
 	 * @param thread an optional thread, or {@code null} for the process
 	 * @return the list of collected containers, possibly empty
 	 */
-	List<TargetBreakpointContainer<?>> collectBreakpointContainers(TargetThread<?> thread);
+	List<TargetBreakpointSpecContainer> collectBreakpointContainers(TargetThread thread);
 
 	/**
 	 * Collect effective breakpoint pertinent to the target or a given thread
@@ -420,13 +419,13 @@ public interface TraceRecorder {
 	 * @param thread an optional thread, or {@code null} for the process
 	 * @return the list of collected breakpoints, possibly empty
 	 */
-	List<TargetBreakpointLocation<?>> collectBreakpoints(TargetThread<?> thread);
+	List<TargetBreakpointLocation> collectBreakpoints(TargetThread thread);
 
 	/**
 	 * Get the kinds of breakpoints supported by any of the recorded breakpoint containers.
 	 * 
-	 * This is the union of all kinds supported among all {@link TargetBreakpointContainer}s found
-	 * applicable to the target by this recorder. Chances are, there is only one container.
+	 * This is the union of all kinds supported among all {@link TargetBreakpointSpecContainer}s
+	 * found applicable to the target by this recorder. Chances are, there is only one container.
 	 * 
 	 * @return the set of supported kinds
 	 */
@@ -448,7 +447,7 @@ public interface TraceRecorder {
 	 *          has the appropriate listener installed on the container sub-tree.
 	 * @return the object which last had focus within this container, if applicable
 	 */
-	TargetObjectRef getFocus();
+	TargetObject getFocus();
 
 	/**
 	 * Request focus on a successor of the target
@@ -460,10 +459,10 @@ public interface TraceRecorder {
 	 * callers do not need to worry that it returns a future, unless they'd like to check for
 	 * success.
 	 * 
-	 * @param focus the object ref on which to focus
+	 * @param focus the object on which to focus
 	 * @return a future which completes with true if the operation was successful, false otherwise.
 	 */
-	CompletableFuture<Boolean> requestFocus(TargetObjectRef focus);
+	CompletableFuture<Boolean> requestFocus(TargetObject focus);
 
 	/**
 	 * Get the internal listener on the model used by the recorder
@@ -479,5 +478,7 @@ public interface TraceRecorder {
 	 * @return the listener
 	 */
 	@Internal
-	ListenerForRecord getListenerForRecord();
+	TraceEventListener getListenerForRecord();
+
+	ListenerSet<TraceRecorderListener> getListeners();
 }

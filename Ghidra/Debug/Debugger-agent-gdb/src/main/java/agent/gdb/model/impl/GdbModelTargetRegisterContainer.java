@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import agent.gdb.manager.*;
+import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.target.TargetRegisterContainer;
@@ -30,11 +31,10 @@ import ghidra.util.Msg;
 import ghidra.util.datastruct.WeakValueHashMap;
 
 @TargetObjectSchemaInfo(name = "RegisterContainer", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+	@TargetAttributeType(type = Void.class) }, canonicalContainer = true)
 public class GdbModelTargetRegisterContainer
 		extends DefaultTargetObject<GdbModelTargetRegister, GdbModelTargetInferior>
-		implements TargetRegisterContainer<GdbModelTargetRegisterContainer> {
+		implements TargetRegisterContainer {
 	public static final String NAME = "Registers";
 
 	protected final GdbModelImpl impl;
@@ -85,7 +85,7 @@ public class GdbModelTargetRegisterContainer
 			n -> new GdbModelTargetRegister(this, register));
 	}
 
-	public CompletableFuture<Void> refresh() {
+	public CompletableFuture<Void> refreshInternal() {
 		if (!isObserved()) {
 			return AsyncUtils.NIL;
 		}
@@ -94,4 +94,13 @@ public class GdbModelTargetRegisterContainer
 			return null;
 		});
 	}
+
+	public void stateChanged(GdbStateChangeRecord sco) {
+		requestElements(false).thenAccept(__ -> {
+			for (GdbModelTargetRegister modelRegister : registersByNumber.values()) {
+				modelRegister.stateChanged(sco);
+			}
+		});
+	}
+
 }

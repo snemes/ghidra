@@ -23,24 +23,24 @@ import agent.gdb.manager.breakpoint.GdbBreakpointInfo;
 import agent.gdb.manager.breakpoint.GdbBreakpointLocation;
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
-import ghidra.dbg.target.TargetBreakpointContainer.TargetBreakpointKindSet;
 import ghidra.dbg.target.TargetBreakpointSpec;
+import ghidra.dbg.target.TargetBreakpointSpecContainer.TargetBreakpointKindSet;
 import ghidra.dbg.target.TargetDeletable;
 import ghidra.dbg.target.schema.TargetAttributeType;
 import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
-import ghidra.dbg.util.CollectionUtils.Delta;
 import ghidra.dbg.util.PathUtils;
 import ghidra.util.Msg;
 import ghidra.util.datastruct.ListenerSet;
 import ghidra.util.datastruct.WeakValueHashMap;
 
-@TargetObjectSchemaInfo(name = "BreakpointSpec", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "BreakpointSpec",
+	attributes = {
+		@TargetAttributeType(type = Void.class) },
+	canonicalContainer = true)
 public class GdbModelTargetBreakpointSpec extends
 		DefaultTargetObject<GdbModelTargetBreakpointLocation, GdbModelTargetBreakpointContainer>
-		implements TargetBreakpointSpec<GdbModelTargetBreakpointSpec>,
-		TargetDeletable<GdbModelTargetBreakpointSpec> {
+		implements TargetBreakpointSpec, TargetDeletable {
 
 	protected static String indexBreakpoint(GdbBreakpointInfo info) {
 		return PathUtils.makeIndex(info.getNumber());
@@ -73,12 +73,10 @@ public class GdbModelTargetBreakpointSpec extends
 		super(breakpoints.impl, breakpoints, keyBreakpoint(info), "BreakpointSpec");
 		this.impl = breakpoints.impl;
 		this.number = info.getNumber();
-
 		this.info = info;
+		impl.addModelObject(info, this);
 
-		changeAttributes(List.of(), Map.of(
-			CONTAINER_ATTRIBUTE_NAME, breakpoints),
-			"Initialized");
+		changeAttributes(List.of(), Map.of(CONTAINER_ATTRIBUTE_NAME, breakpoints), "Initialized");
 	}
 
 	protected CompletableFuture<Void> init() {
@@ -90,7 +88,7 @@ public class GdbModelTargetBreakpointSpec extends
 
 	@Override
 	public CompletableFuture<Void> delete() {
-		return impl.gdb.deleteBreakpoints(number);
+		return impl.gateFuture(impl.gdb.deleteBreakpoints(number));
 	}
 
 	@Override
@@ -106,9 +104,9 @@ public class GdbModelTargetBreakpointSpec extends
 	protected TargetBreakpointKindSet computeKinds(GdbBreakpointInfo from) {
 		switch (from.getType()) {
 			case BREAKPOINT:
-				return TargetBreakpointKindSet.of(TargetBreakpointKind.SOFTWARE);
+				return TargetBreakpointKindSet.of(TargetBreakpointKind.SW_EXECUTE);
 			case HW_BREAKPOINT:
-				return TargetBreakpointKindSet.of(TargetBreakpointKind.EXECUTE);
+				return TargetBreakpointKindSet.of(TargetBreakpointKind.HW_EXECUTE);
 			case HW_WATCHPOINT:
 				return TargetBreakpointKindSet.of(TargetBreakpointKind.WRITE);
 			case READ_WATCHPOINT:
@@ -153,12 +151,12 @@ public class GdbModelTargetBreakpointSpec extends
 
 	@Override
 	public CompletableFuture<Void> disable() {
-		return impl.gdb.disableBreakpoints(number);
+		return impl.gateFuture(impl.gdb.disableBreakpoints(number));
 	}
 
 	@Override
 	public CompletableFuture<Void> enable() {
-		return impl.gdb.enableBreakpoints(number);
+		return impl.gateFuture(impl.gdb.enableBreakpoints(number));
 	}
 
 	protected CompletableFuture<Void> updateInfo(GdbBreakpointInfo oldInfo,
@@ -172,28 +170,23 @@ public class GdbModelTargetBreakpointSpec extends
 	}
 
 	protected void updateAttributesFromInfo(String reason) {
-		Delta<?, ?> delta = changeAttributes(List.of(), Map.of(
+		changeAttributes(List.of(), Map.of(
 			ENABLED_ATTRIBUTE_NAME, enabled = info.isEnabled(),
 			EXPRESSION_ATTRIBUTE_NAME, expression = info.getOriginalLocation(),
 			KINDS_ATTRIBUTE_NAME, kinds = computeKinds(info),
-			DISPLAY_ATTRIBUTE_NAME, updateDisplay() //
-		), reason);
-		// TODO: These attribute-specific conveniences should be done by DTO.
-		if (delta.added.containsKey(ENABLED_ATTRIBUTE_NAME)) {
-			listeners.fire(TargetBreakpointSpecListener.class).breakpointToggled(this, enabled);
-		}
-		if (delta.added.containsKey(DISPLAY_ATTRIBUTE_NAME)) {
-			listeners.fire.displayChanged(this, display);
-		}
+			DISPLAY_ATTRIBUTE_NAME, updateDisplay()),
+			reason);
 	}
 
-	protected synchronized List<GdbModelTargetBreakpointLocation> setInfoAndComputeEffectives(
+	protected synchronized List<GdbModelTargetBreakpointLocation> setInfoAndComputeLocations(
 			GdbBreakpointInfo oldInfo, GdbBreakpointInfo newInfo) {
-		assert oldInfo == this.info;
+		if (oldInfo != this.info) {
+			Msg.error(this, "Manager and model breakpoint info was/is out of sync!");
+		}
 		this.info = newInfo;
 		List<GdbModelTargetBreakpointLocation> effectives = newInfo.getLocations()
 				.stream()
-				.map(this::getTargetEffectiveBreakpoint)
+				.map(this::getTargetBreakpointLocation)
 				.collect(Collectors.toList());
 		breaksBySub.keySet()
 				.retainAll(
@@ -203,31 +196,29 @@ public class GdbModelTargetBreakpointSpec extends
 
 	protected CompletableFuture<Void> updateBktpInfo(GdbBreakpointInfo oldInfo,
 			GdbBreakpointInfo newInfo, String reason) {
-		List<GdbModelTargetBreakpointLocation> effectives =
-			setInfoAndComputeEffectives(oldInfo, newInfo);
+		List<GdbModelTargetBreakpointLocation> locs = setInfoAndComputeLocations(oldInfo, newInfo);
 		updateAttributesFromInfo(reason);
-		setElements(effectives, reason);
+		setElements(locs, reason);
 		return AsyncUtils.NIL;
 	}
 
 	protected CompletableFuture<Void> updateWptInfo(GdbBreakpointInfo oldInfo,
 			GdbBreakpointInfo newInfo, String reason) {
-		List<GdbModelTargetBreakpointLocation> effectives =
-			setInfoAndComputeEffectives(oldInfo, newInfo);
+		List<GdbModelTargetBreakpointLocation> locs = setInfoAndComputeLocations(oldInfo, newInfo);
 		updateAttributesFromInfo(reason);
-		assert effectives.size() == 1;
-		return effectives.get(0).initWpt().thenAccept(__ -> {
-			setElements(effectives, reason);
+		assert locs.size() == 1;
+		return locs.get(0).initWpt().thenAccept(__ -> {
+			setElements(locs, reason);
 		});
 	}
 
-	protected GdbModelTargetBreakpointLocation findEffective(GdbModelTargetStackFrame frame) {
+	protected GdbModelTargetBreakpointLocation findLocation(GdbModelTargetStackFrame frame) {
 		for (GdbModelTargetBreakpointLocation bp : breaksBySub.values()) {
 			// TODO: Is this necessary?
 			/*if (bp.range.contains(frame.pc)) {
 				continue;
 			}*/
-			if (!bp.affects.contains(frame.inferior)) {
+			if (!bp.loc.getInferiorIds().contains(frame.inferior.inferior.getId())) {
 				continue;
 			}
 			return bp;
@@ -240,7 +231,7 @@ public class GdbModelTargetBreakpointSpec extends
 		actions.fire.breakpointHit(this, frame.thread, frame, eb);
 	}
 
-	public synchronized GdbModelTargetBreakpointLocation getTargetEffectiveBreakpoint(
+	public synchronized GdbModelTargetBreakpointLocation getTargetBreakpointLocation(
 			GdbBreakpointLocation loc) {
 		return breaksBySub.computeIfAbsent(loc.getSub(),
 			i -> new GdbModelTargetBreakpointLocation(this, loc));

@@ -19,14 +19,13 @@ import java.io.IOException;
 import java.util.List;
 
 import db.DBRecord;
-import db.util.ErrorHandler;
 import ghidra.program.database.DatabaseObject;
 import ghidra.util.LockHold;
 import ghidra.util.database.DBCachedObjectStoreFactory.DBFieldCodec;
 
 public class DBAnnotatedObject extends DatabaseObject {
 	private final DBCachedObjectStore<?> store;
-	private final ErrorHandler adapter;
+	private final DBCachedDomainObjectAdapter adapter;
 	private final List<DBFieldCodec<?, ?, ?>> codecs;
 
 	DBRecord record;
@@ -37,13 +36,22 @@ public class DBAnnotatedObject extends DatabaseObject {
 		this.store = store;
 		this.record = record;
 		if (store != null) {
-			this.adapter = store.errHandler;
+			this.adapter = store.adapter;
 			this.codecs = (List) store.codecs;
 		}
 		else {
 			this.adapter = null;
 			this.codecs = null;
 		}
+	}
+
+	/**
+	 * Get an opaque unique id for this object, whose hash is immutable
+	 * 
+	 * @return the opaque object id
+	 */
+	public ObjectKey getObjectKey() {
+		return new ObjectKey(store.adapter, store.table.getName(), key);
 	}
 
 	@SuppressWarnings({ "rawtypes", "unchecked" })
@@ -177,5 +185,9 @@ public class DBAnnotatedObject extends DatabaseObject {
 		this.record = rec;
 		fresh(false);
 		return true;
+	}
+
+	public boolean isDeleted() {
+		return super.isDeleted(adapter.getLock());
 	}
 }

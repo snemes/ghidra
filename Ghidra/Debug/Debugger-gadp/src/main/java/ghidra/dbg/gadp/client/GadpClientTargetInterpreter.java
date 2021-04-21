@@ -17,14 +17,10 @@ package ghidra.dbg.gadp.client;
 
 import java.util.concurrent.CompletableFuture;
 
-import ghidra.dbg.gadp.client.annot.GadpAttributeChangeCallback;
 import ghidra.dbg.gadp.protocol.Gadp;
-import ghidra.dbg.gadp.util.GadpValueUtils;
 import ghidra.dbg.target.TargetInterpreter;
-import ghidra.dbg.util.ValueUtils;
 
-public interface GadpClientTargetInterpreter
-		extends GadpClientTargetObject, TargetInterpreter<GadpClientTargetInterpreter> {
+public interface GadpClientTargetInterpreter extends GadpClientTargetObject, TargetInterpreter {
 
 	@Override
 	default CompletableFuture<Void> execute(String cmd) {
@@ -45,15 +41,5 @@ public interface GadpClientTargetInterpreter
 				.setCapture(true),
 			Gadp.ExecuteReply.getDefaultInstance())
 				.thenApply(rep -> rep.getCaptured());
-	}
-
-	default String promptFromObj(Object obj) {
-		return ValueUtils.expectType(obj, String.class, this, PROMPT_ATTRIBUTE_NAME, ">", true);
-	}
-
-	@GadpAttributeChangeCallback(PROMPT_ATTRIBUTE_NAME)
-	default void handlePromptChanged(Object prompt) {
-		getDelegate().listeners.fire(TargetInterpreterListener.class)
-				.promptChanged(this, promptFromObj(prompt));
 	}
 }

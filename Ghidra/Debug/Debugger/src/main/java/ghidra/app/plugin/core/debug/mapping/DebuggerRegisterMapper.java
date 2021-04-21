@@ -16,9 +16,8 @@
 package ghidra.app.plugin.core.debug.mapping;
 
 import java.math.BigInteger;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 
 import ghidra.app.plugin.core.debug.register.RegisterTypeInfo;
 import ghidra.dbg.target.TargetRegister;
@@ -44,7 +43,7 @@ public interface DebuggerRegisterMapper {
 	 * @param name the name of the register as a string
 	 * @return the register description (name) on target
 	 */
-	TargetRegister<?> getTargetRegister(String name);
+	TargetRegister getTargetRegister(String name);
 
 	/**
 	 * Get a trace register (name) by string
@@ -68,7 +67,7 @@ public interface DebuggerRegisterMapper {
 		if (!lReg.isBaseRegister()) {
 			throw new IllegalArgumentException();
 		}
-		TargetRegister<?> tReg = traceToTarget(lReg);
+		TargetRegister tReg = traceToTarget(lReg);
 		if (tReg == null) {
 			return null;
 		}
@@ -77,12 +76,29 @@ public interface DebuggerRegisterMapper {
 	}
 
 	/**
+	 * Convert a collection of register values to a string-byte-array map suitable for the debug API
+	 * 
+	 * @param registerValues the collection of values
+	 * @return the map
+	 */
+	default Map<String, byte[]> traceToTarget(Collection<RegisterValue> registerValues) {
+		Map<String, byte[]> result = new LinkedHashMap<>();
+		for (RegisterValue rv : registerValues) {
+			Entry<String, byte[]> entry = traceToTarget(rv);
+			if (entry != null) {
+				result.put(entry.getKey(), entry.getValue());
+			}
+		}
+		return result;
+	}
+
+	/**
 	 * Convert a trace register name to a target register name
 	 * 
 	 * @param register the trace register
 	 * @return the target register
 	 */
-	TargetRegister<?> traceToTarget(Register register);
+	TargetRegister traceToTarget(Register register);
 
 	/**
 	 * Convert a target register name and byte array value into a trace register value
@@ -92,7 +108,7 @@ public interface DebuggerRegisterMapper {
 	 * @return the converted register value suitable for trace storage
 	 */
 	default RegisterValue targetToTrace(String tRegName, byte[] value) {
-		TargetRegister<?> tReg = getTargetRegister(tRegName);
+		TargetRegister tReg = getTargetRegister(tRegName);
 		if (tReg == null) {
 			return null;
 		}
@@ -106,7 +122,7 @@ public interface DebuggerRegisterMapper {
 	 * @param value the value of the target register
 	 * @return the converted register value suitable for trace storage
 	 */
-	default RegisterValue targetToTrace(TargetRegister<?> tReg, byte[] value) {
+	default RegisterValue targetToTrace(TargetRegister tReg, byte[] value) {
 		if (value == null) {
 			return null;
 		}
@@ -119,12 +135,29 @@ public interface DebuggerRegisterMapper {
 	}
 
 	/**
+	 * Convert a string-byte-value map to a map of trace register values
+	 * 
+	 * @param values the target values
+	 * @return the trace values
+	 */
+	default Map<Register, RegisterValue> targetToTrace(Map<String, byte[]> values) {
+		Map<Register, RegisterValue> result = new LinkedHashMap<>();
+		for (Map.Entry<String, byte[]> ent : values.entrySet()) {
+			RegisterValue rv = targetToTrace(ent.getKey(), ent.getValue());
+			if (rv != null) {
+				result.put(rv.getRegister(), rv);
+			}
+		}
+		return result;
+	}
+
+	/**
 	 * Convert a target register name to a trace register name
 	 * 
 	 * @param tReg the target register name
 	 * @return the trace register name (as defined by the Ghidra language)
 	 */
-	Register targetToTrace(TargetRegister<?> tReg);
+	Register targetToTrace(TargetRegister tReg);
 
 	/**
 	 * Get suggested type information for a given trace register
@@ -152,7 +185,7 @@ public interface DebuggerRegisterMapper {
 	 * 
 	 * @param register the new register
 	 */
-	void targetRegisterAdded(TargetRegister<?> register);
+	void targetRegisterAdded(TargetRegister register);
 
 	/**
 	 * The recorder is informing this mapper of a removed target register
@@ -168,5 +201,5 @@ public interface DebuggerRegisterMapper {
 	 * 
 	 * @param register the old register
 	 */
-	void targetRegisterRemoved(TargetRegister<?> register);
+	void targetRegisterRemoved(TargetRegister register);
 }

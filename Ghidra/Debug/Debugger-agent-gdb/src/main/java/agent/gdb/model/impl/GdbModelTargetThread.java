@@ -23,8 +23,9 @@ import agent.gdb.manager.*;
 import agent.gdb.manager.GdbManager.ExecSuffix;
 import agent.gdb.manager.impl.GdbFrameInfo;
 import agent.gdb.manager.impl.GdbThreadInfo;
+import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
 import agent.gdb.manager.reason.GdbBreakpointHitReason;
-import agent.gdb.manager.reason.GdbReason;
+import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.schema.*;
@@ -32,18 +33,24 @@ import ghidra.dbg.util.PathUtils;
 import ghidra.lifecycle.Internal;
 import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "Thread", elements = {
-	@TargetElementType(type = Void.class)
-}, attributes = {
-	@TargetAttributeType(type = Void.class)
-})
+@TargetObjectSchemaInfo(
+	name = "Thread",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(type = Void.class) })
 public class GdbModelTargetThread
 		extends DefaultTargetObject<TargetObject, GdbModelTargetThreadContainer> implements
-		TargetThread<GdbModelTargetThread>, TargetExecutionStateful<GdbModelTargetThread>,
-		TargetSteppable<GdbModelTargetThread>, GdbModelSelectableObject {
+		TargetThread, TargetExecutionStateful, TargetSteppable, GdbModelSelectableObject {
 	protected static final TargetStepKindSet SUPPORTED_KINDS = TargetStepKindSet.of( //
-		TargetStepKind.ADVANCE, TargetStepKind.FINISH, TargetStepKind.LINE, TargetStepKind.OVER,
-		TargetStepKind.OVER_LINE, TargetStepKind.RETURN, TargetStepKind.UNTIL);
+		TargetStepKind.ADVANCE, //
+		TargetStepKind.FINISH, //
+		TargetStepKind.LINE, //
+		TargetStepKind.OVER, //
+		TargetStepKind.OVER_LINE, //
+		TargetStepKind.RETURN, //
+		TargetStepKind.UNTIL, //
+		TargetStepKind.EXTENDED);
 
 	protected static String indexThread(int threadId) {
 		return PathUtils.makeIndex(threadId);
@@ -63,6 +70,7 @@ public class GdbModelTargetThread
 	protected String display;
 	protected String shortDisplay;
 	protected GdbThreadInfo info;
+	private Integer base = 10;
 
 	protected final GdbModelTargetStack stack;
 
@@ -72,19 +80,16 @@ public class GdbModelTargetThread
 		this.impl = threads.impl;
 		this.inferior = inferior.inferior;
 		this.thread = thread;
+		impl.addModelObject(thread, this);
 
 		this.stack = new GdbModelTargetStack(this, inferior);
 
-		changeAttributes(List.of(),
-			List.of(
-				stack),
-			Map.of(
-				STATE_ATTRIBUTE_NAME, convertState(thread.getState()),
-				SUPPORTED_STEP_KINDS_ATTRIBUTE_NAME, SUPPORTED_KINDS,
-				DISPLAY_ATTRIBUTE_NAME, display = computeDisplay(),
-				UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED,
-				stack.getName(), stack),
-			"Initialized");
+		changeAttributes(List.of(), List.of(stack), Map.of( //
+			STATE_ATTRIBUTE_NAME, convertState(thread.getState()), //
+			SUPPORTED_STEP_KINDS_ATTRIBUTE_NAME, SUPPORTED_KINDS, //
+			SHORT_DISPLAY_ATTRIBUTE_NAME, shortDisplay = computeShortDisplay(), //
+			DISPLAY_ATTRIBUTE_NAME, display = computeDisplay() //
+		), "Initialized");
 
 		updateInfo().exceptionally(ex -> {
 			Msg.error(this, "Could not initialize thread info");
@@ -104,17 +109,14 @@ public class GdbModelTargetThread
 				SHORT_DISPLAY_ATTRIBUTE_NAME, shortDisplay = computeShortDisplay(), //
 				DISPLAY_ATTRIBUTE_NAME, display = computeDisplay() //
 			), "Initialized");
-			listeners.fire.displayChanged(this, getDisplay());
 		});
 	}
 
 	protected String computeDisplay() {
 		StringBuilder sb = new StringBuilder();
+		sb.append(shortDisplay);
 		if (info != null) {
-			sb.append(shortDisplay);
 			sb.append(" ");
-			//sb.append(info.getTargetId());
-			//sb.append(" ");
 			sb.append(info.getInferiorName());
 			sb.append(" ");
 			sb.append(info.getState());
@@ -127,22 +129,23 @@ public class GdbModelTargetThread
 				sb.append(" in ");
 				sb.append(frame.getFunc());
 			}
-			return sb.toString();
 		}
-		sb.append(thread.getId());
-		sb.append(" ");
-		sb.append(stack.inferior.inferior.getDescriptor());
-		sb.append(" ");
-		sb.append(stack.inferior.inferior.getExecutable());
-		GdbModelTargetStackFrame top = stack.framesByLevel.get(0);
-		if (top == null) {
-			return sb.toString();
+		else {
+			sb.append(" ");
+			String executableName = stack.inferior.inferior.getExecutable();
+			if (executableName != null) {
+				sb.append(executableName);
+			}
+			GdbModelTargetStackFrame top = stack.framesByLevel.get(0);
+			if (top == null) {
+				return sb.toString();
+			}
+			sb.append(" 0x");
+			sb.append(top.frame.getAddress().toString(16));
+			sb.append(" in ");
+			sb.append(top.frame.getFunction());
+			sb.append(" ()");
 		}
-		sb.append(" 0x");
-		sb.append(top.frame.getAddress().toString(16));
-		sb.append(" in ");
-		sb.append(top.frame.getFunction());
-		sb.append(" ()");
 		return sb.toString();
 	}
 
@@ -151,10 +154,20 @@ public class GdbModelTargetThread
 		sb.append("[");
 		sb.append(inferior.getId());
 		sb.append(".");
-		sb.append(info.getId());
-		if (info.getTid() != null) {
-			sb.append(":");
-			sb.append(info.getTid());
+		if (info == null) {
+			sb.append(thread.getId());
+		}
+		else {
+			sb.append(info.getId());
+			Integer tid = info.getTid();
+			if (tid != null) {
+				String tidstr = Integer.toString(tid, base);
+				if (base == 16) {
+					tidstr = "0x" + tidstr;
+				}
+				sb.append(":");
+				sb.append(tidstr);
+			}
 		}
 		sb.append("]");
 		return sb.toString();
@@ -167,25 +180,6 @@ public class GdbModelTargetThread
 			case STOPPED:
 			default:
 				return TargetExecutionState.STOPPED;
-		}
-	}
-
-	protected void threadStateChanged(GdbState state, GdbReason reason) {
-		if (state == GdbState.STOPPED) {
-			updateStack(); // NB: Callee handles errors
-		}
-		TargetExecutionState targetState = convertState(state);
-		changeAttributes(List.of(), Map.of( //
-			STATE_ATTRIBUTE_NAME, targetState //
-		), reason.desc());
-		listeners.fire(TargetExecutionStateListener.class).executionStateChanged(this, targetState);
-
-		if (reason instanceof GdbBreakpointHitReason) {
-			GdbBreakpointHitReason bpHit = (GdbBreakpointHitReason) reason;
-			GdbStackFrame frame = bpHit.getFrame(thread);
-			GdbModelTargetStackFrame f = stack.getTargetFrame(frame);
-			long bpId = bpHit.getBreakpointId();
-			impl.session.breakpoints.breakpointHit(bpId, f);
 		}
 	}
 
@@ -205,6 +199,8 @@ public class GdbModelTargetThread
 				return ExecSuffix.RETURN;
 			case UNTIL:
 				return ExecSuffix.UNTIL;
+			case EXTENDED:
+				return ExecSuffix.EXTENDED;
 			default:
 				throw new AssertionError();
 		}
@@ -217,9 +213,9 @@ public class GdbModelTargetThread
 				throw new UnsupportedOperationException(kind.name());
 			case ADVANCE: // Why no exec-advance in GDB/MI?
 				// TODO: This doesn't work, since advance requires a parameter
-				return thread.console("advance");
+				return model.gateFuture(thread.console("advance"));
 			default:
-				return thread.step(convertToGdb(kind));
+				return model.gateFuture(thread.step(convertToGdb(kind)));
 		}
 	}
 
@@ -227,17 +223,36 @@ public class GdbModelTargetThread
 		stack.invalidateRegisterCaches();
 	}
 
-	protected CompletableFuture<?> updateStack() {
-		Msg.debug(this, "Updating stack for " + this);
-		return stack.update().thenCompose(__ -> updateInfo()).exceptionally(ex -> {
-			model.reportError(this, "Could not update stack for thread " + this, ex);
-			return null;
-		});
-	}
-
 	@Override
 	@Internal
-	public CompletableFuture<Void> select() {
-		return thread.select();
+	public CompletableFuture<Void> setActive() {
+		return impl.gateFuture(thread.setActive());
 	}
+
+	public GdbModelTargetBreakpointLocation breakpointHit(GdbBreakpointHitReason reason) {
+		GdbStackFrame frame = reason.getFrame(thread);
+		GdbModelTargetStackFrame targetFrame = stack.getTargetFrame(frame);
+		long bpId = reason.getBreakpointId();
+		return impl.session.breakpoints.breakpointHit(bpId, targetFrame);
+	}
+
+	public CompletableFuture<Void> stateChanged(GdbStateChangeRecord sco) {
+		GdbState state = sco.getState();
+		CompletableFuture<Void> result = AsyncUtils.NIL;
+		if (state == GdbState.STOPPED) {
+			Msg.debug(this, "Updating stack for " + this);
+			result = CompletableFuture.allOf(updateInfo(), stack.stateChanged(sco));
+		}
+		TargetExecutionState targetState = convertState(state);
+		changeAttributes(List.of(), Map.of( //
+			STATE_ATTRIBUTE_NAME, targetState //
+		), sco.getReason().desc());
+		return result;
+	}
+
+	public void setBase(Object value) {
+		this.base = (Integer) value;
+		updateInfo();
+	}
+
 }

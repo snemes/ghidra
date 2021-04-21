@@ -28,14 +28,13 @@ import ghidra.dbg.target.TargetExecutionStateful;
  * 
  * @param <T> type for this
  */
-public interface JdiModelTargetExecutionStateful<T extends TargetExecutionStateful<T>>
-		extends JdiModelTargetObject, TargetExecutionStateful<T> {
+public interface JdiModelTargetExecutionStateful
+		extends JdiModelTargetObject, TargetExecutionStateful {
 
 	public default void setExecutionState(TargetExecutionState state, String reason) {
 		changeAttributes(List.of(), Map.of( //
 			STATE_ATTRIBUTE_NAME, state //
 		), reason);
-		getListeners().fire(TargetExecutionStateListener.class).executionStateChanged(this, state);
 	}
 
 }

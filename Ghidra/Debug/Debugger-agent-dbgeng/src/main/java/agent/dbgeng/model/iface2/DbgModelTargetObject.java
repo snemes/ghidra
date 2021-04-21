@@ -22,12 +22,15 @@ import java.util.concurrent.CompletableFuture;
 import agent.dbgeng.dbgeng.DebugClient.DebugStatus;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.AbstractDbgModel;
+import ghidra.async.AsyncUtils;
+import ghidra.dbg.DebuggerModelListener;
 import ghidra.dbg.agent.InvalidatableTargetObjectIf;
+import ghidra.dbg.agent.SpiTargetObject;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.util.CollectionUtils.Delta;
 import ghidra.util.datastruct.ListenerSet;
 
-public interface DbgModelTargetObject extends TargetObject, InvalidatableTargetObjectIf {
+public interface DbgModelTargetObject extends SpiTargetObject, InvalidatableTargetObjectIf {
 
 	@Override
 	public AbstractDbgModel getModel();
@@ -53,19 +56,17 @@ public interface DbgModelTargetObject extends TargetObject, InvalidatableTargetO
 		return impl;
 	}
 
-	@Override
-	public CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchElements();
-
-	@Override
-	public CompletableFuture<? extends Map<String, ?>> fetchAttributes();
-
-	public TargetObject getImplParent();
-
 	public Delta<?, ?> changeAttributes(List<String> remove, Map<String, ?> add, String reason);
 
 	public CompletableFuture<? extends Map<String, ?>> requestNativeAttributes();
 
-	public ListenerSet<TargetObjectListener> getListeners();
+	public default CompletableFuture<Void> requestAugmentedAttributes() {
+		return AsyncUtils.NIL;
+	}
+
+	public CompletableFuture<List<TargetObject>> requestNativeElements();
+
+	public ListenerSet<DebuggerModelListener> getListeners();
 
 	public DbgModelTargetSession getParentSession();
 

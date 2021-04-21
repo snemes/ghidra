@@ -84,13 +84,13 @@ public abstract class AbstractGhidraHeadedDebuggerGUITest
 		}
 
 		@Override
-		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory<?> memory) {
+		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory memory) {
 			return new DefaultDebuggerMemoryMapper(language, memory.getModel());
 		}
 
 		@Override
 		protected DebuggerRegisterMapper createRegisterMapper(
-				TargetRegisterContainer<?> registers) {
+				TargetRegisterContainer registers) {
 			return new DefaultDebuggerRegisterMapper(cSpec, registers, true);
 		}
 	}
@@ -157,6 +157,18 @@ public abstract class AbstractGhidraHeadedDebuggerGUITest
 	}
 
 	/**
+	 * This is so gross
+	 * 
+	 * @param lockable
+	 */
+	protected void waitForLock(DomainObject lockable) {
+		waitForPass(() -> {
+			assertTrue(lockable.lock(null));
+			lockable.unlock();
+		});
+	}
+
+	/**
 	 * Get an address in the trace's default space
 	 * 
 	 * @param trace the trace
@@ -208,7 +220,7 @@ public abstract class AbstractGhidraHeadedDebuggerGUITest
 		}
 	}
 
-	protected static TargetBreakpointContainer<?> getBreakpointContainer(TraceRecorder r) {
+	protected static TargetBreakpointSpecContainer getBreakpointContainer(TraceRecorder r) {
 		return waitFor(() -> Unique.assertAtMostOne(r.collectBreakpointContainers(null)),
 			"No container");
 	}
@@ -508,17 +520,23 @@ public abstract class AbstractGhidraHeadedDebuggerGUITest
 	}
 
 	protected void createProgramFromTrace(Trace trace) throws IOException {
-		program = new ProgramDB(getProgramName(), trace.getBaseLanguage(),
-			trace.getBaseCompilerSpec(), this);
+		createProgram(trace.getBaseLanguage(), trace.getBaseCompilerSpec());
 	}
 
 	protected void createProgramFromTrace() throws IOException {
 		createProgramFromTrace(tb.trace);
 	}
 
+	protected void createProgram(Language lang, CompilerSpec cSpec) throws IOException {
+		program = new ProgramDB(getProgramName(), lang, cSpec, this);
+	}
+
+	protected void createProgram(Language lang) throws IOException {
+		createProgram(lang, lang.getDefaultCompilerSpec());
+	}
+
 	protected void createProgram() throws IOException {
-		Language lang = getToyBE64Language();
-		program = new ProgramDB(getProgramName(), lang, lang.getDefaultCompilerSpec(), this);
+		createProgram(getToyBE64Language());
 	}
 
 	protected void createAndOpenProgramFromTrace() throws IOException {
@@ -537,7 +555,7 @@ public abstract class AbstractGhidraHeadedDebuggerGUITest
 		programManager.openProgram(program);
 	}
 
-	protected void setRegistersAndWaitForRecord(AbstractTestTargetRegisterBank<?, ?> bank,
+	protected void setRegistersAndWaitForRecord(AbstractTestTargetRegisterBank<?> bank,
 			Map<String, byte[]> values, long timeoutMillis) throws Exception {
 		TraceThread traceThread = modelService.getTraceThread(bank.getThread());
 		assertNotNull(traceThread);

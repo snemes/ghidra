@@ -29,8 +29,6 @@ import ghidra.app.plugin.core.debug.gui.objects.DebuggerObjectsProvider;
 import ghidra.app.plugin.core.debug.gui.objects.ObjectContainer;
 import ghidra.app.plugin.core.debug.mapping.DebuggerMemoryMapper;
 import ghidra.app.services.*;
-import ghidra.dbg.attributes.TargetObjectRef;
-import ghidra.dbg.target.TargetFocusScope;
 import ghidra.dbg.target.TargetObject;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressRangeImpl;
@@ -109,7 +107,14 @@ public class ObjectTable<R> implements ObjectPane {
 	}
 
 	@Override
-	public void signalDataChange(ObjectContainer oc) {
+	public void signalDataChanged(ObjectContainer oc) {
+		Swing.runIfSwingOrRunLater(() -> {
+			update(oc);
+		});
+	}
+
+	@Override
+	public void signalContentsChanged(ObjectContainer oc) {
 		Swing.runIfSwingOrRunLater(() -> {
 			update(oc);
 		});
@@ -142,12 +147,12 @@ public class ObjectTable<R> implements ObjectPane {
 		List<R> list = new ArrayList<>();
 		for (ObjectContainer child : changed.getCurrentChildren()) {
 			if (child.isVisible() || !getContainer().getProvider().isHideIntrinsics()) {
-				TargetObjectRef ref = child.getTargetObject();
+				TargetObject to = child.getTargetObject();
 				try {
 					R r = clazz
-							.getDeclaredConstructor(TargetObjectRef.class,
+							.getDeclaredConstructor(TargetObject.class,
 								DebuggerObjectsProvider.class)
-							.newInstance(ref, container.getProvider());
+							.newInstance(to, container.getProvider());
 					list.add(r);
 				}
 				catch (Exception e) {
@@ -242,7 +247,7 @@ public class ObjectTable<R> implements ObjectPane {
 		return null;
 	}
 
-	public void setSelectedObject(TargetObjectRef selection) {
+	public void setSelectedObject(TargetObject selection) {
 		for (int i = 0; i < model.getRowCount(); i++) {
 			R r = model.getRowObject(i);
 			if (r instanceof ObjectAttributeRow) {
@@ -263,7 +268,7 @@ public class ObjectTable<R> implements ObjectPane {
 	}
 
 	@Override
-	public void setFocus(TargetFocusScope<?> object, TargetObjectRef focused) {
+	public void setFocus(TargetObject object, TargetObject focused) {
 		Swing.runIfSwingOrRunLater(() -> {
 			setSelectedObject(focused);
 		});

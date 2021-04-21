@@ -19,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 
 import ghidra.dbg.DebuggerTargetObjectIface;
 import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.lifecycle.Experimental;
 
 /**
@@ -32,23 +33,23 @@ import ghidra.lifecycle.Experimental;
  * TODO: Experiment with the idea of "synthetic modules" as presented by {@code dbgeng.dll}. Is
  * there a similar idea in GDB? This could allow us to expose Ghidra's symbol table and types to the
  * native debugger.
+ * 
+ * <p>
+ * TODO: Rename this to {@code TargetModuleOperations}. Conventionally, it is a container of
+ * modules, but it doesn't technically have to be. If we don't eventually go forward with synthetic
+ * modules, then we could remove this interface altogether. A client searching for the module
+ * container should use {@link TargetObjectSchema#searchForCanonicalContainer(Class)}.
  */
 @DebuggerTargetObjectIface("ModuleContainer")
-public interface TargetModuleContainer<T extends TargetModuleContainer<T>>
-		extends TypedTargetObject<T> {
-	enum Private {
-		;
-		private abstract class Cls implements TargetModuleContainer<Cls> {
-		}
-	}
-
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<Private.Cls> tclass = (Class) TargetModuleContainer.class;
+public interface TargetModuleContainer extends TargetObject {
 
 	String SUPPORTS_SYNTHETIC_MODULES_ATTRIBUTE_NAME =
 		PREFIX_INVISIBLE + "supports_synthetic_modules";
 
-	@TargetAttributeType(name = SUPPORTS_SYNTHETIC_MODULES_ATTRIBUTE_NAME, fixed = true, hidden = true)
+	@TargetAttributeType(
+		name = SUPPORTS_SYNTHETIC_MODULES_ATTRIBUTE_NAME,
+		fixed = true,
+		hidden = true)
 	@Experimental
 	public default boolean supportsSyntheticModules() {
 		return getTypedAttributeNowByName(SUPPORTS_SYNTHETIC_MODULES_ATTRIBUTE_NAME, Boolean.class,
@@ -56,7 +57,7 @@ public interface TargetModuleContainer<T extends TargetModuleContainer<T>>
 	}
 
 	@Experimental
-	public default CompletableFuture<? extends TargetModule<?>> addSyntheticModule(String name) {
+	public default CompletableFuture<? extends TargetModule> addSyntheticModule(String name) {
 		throw new UnsupportedOperationException();
 	}
 }

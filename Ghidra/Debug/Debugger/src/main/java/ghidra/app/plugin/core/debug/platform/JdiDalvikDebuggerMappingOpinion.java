@@ -17,10 +17,8 @@ package ghidra.app.plugin.core.debug.platform;
 
 import java.util.Collection;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 
 import ghidra.app.plugin.core.debug.mapping.*;
-import ghidra.dbg.DebugModelConventions;
 import ghidra.dbg.target.*;
 import ghidra.program.model.lang.*;
 
@@ -39,19 +37,18 @@ public class JdiDalvikDebuggerMappingOpinion implements DebuggerMappingOpinion {
 		}
 
 		@Override
-		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory<?> memory) {
+		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory memory) {
 			return new DefaultDebuggerMemoryMapper(language, memory.getModel());
 		}
 
 		@Override
-		protected DebuggerRegisterMapper createRegisterMapper(
-				TargetRegisterContainer<?> registers) {
+		protected DebuggerRegisterMapper createRegisterMapper(TargetRegisterContainer registers) {
 			return new DefaultDebuggerRegisterMapper(cSpec, registers, false);
 		}
 	}
 
 	protected static class DalvikDebuggerMappingOffer extends AbstractDebuggerMappingOffer {
-		public DalvikDebuggerMappingOffer(TargetProcess<?> process) {
+		public DalvikDebuggerMappingOffer(TargetProcess process) {
 			super(process, 100, "Dalvik Virtual Machine", LANG_ID_DALVIK, COMP_ID_VS, Set.of());
 		}
 
@@ -66,23 +63,11 @@ public class JdiDalvikDebuggerMappingOpinion implements DebuggerMappingOpinion {
 		}
 	}
 
-	@Override
-	public CompletableFuture<Set<DebuggerMappingOffer>> getOffers(TargetObject target) {
-		if (!(target instanceof TargetProcess)) {
-			return CompletableFuture.completedFuture(Set.of());
-		}
-		TargetProcess<?> process = (TargetProcess<?>) target;
-		CompletableFuture<? extends TargetEnvironment<?>> futureEnv =
-			DebugModelConventions.findSuitable(TargetEnvironment.tclass, target);
-		return futureEnv.thenApply(env -> offersForEnv(env, process));
-	}
-
 	protected static boolean containsRecognizedJvmName(String name) {
 		return DALVIK_VM_NAMES.stream().anyMatch(name::contains);
 	}
 
-	protected Set<DebuggerMappingOffer> offersForEnv(TargetEnvironment<?> env,
-			TargetProcess<?> process) {
+	public Set<DebuggerMappingOffer> offersForEnv(TargetEnvironment env, TargetProcess process) {
 		if (!env.getDebugger().contains("Java Debug Interface")) {
 			return Set.of();
 		}

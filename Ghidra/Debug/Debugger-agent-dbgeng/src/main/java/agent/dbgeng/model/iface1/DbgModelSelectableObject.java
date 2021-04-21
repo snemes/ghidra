@@ -21,33 +21,33 @@ import agent.dbgeng.manager.DbgProcess;
 import agent.dbgeng.manager.DbgThread;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.iface2.*;
-import ghidra.dbg.attributes.TargetObjectRef;
+import ghidra.dbg.target.TargetObject;
 
 public interface DbgModelSelectableObject extends DbgModelTargetObject {
 
-	public default CompletableFuture<Void> select() {
+	public default CompletableFuture<Void> setActive() {
 		if (this instanceof DbgModelTargetSession) {
 			DbgManagerImpl manager = getManager();
 			DbgProcess process = manager.getCurrentProcess();
-			return process.select();
+			return process.setActive();
 		}
 		if (this instanceof DbgModelTargetProcess) {
 			DbgModelTargetProcess tp = (DbgModelTargetProcess) this;
 			DbgProcess process = tp.getProcess();
-			return process.select();
+			return process.setActive();
 		}
 		if (this instanceof DbgModelTargetThread) {
 			DbgModelTargetThread tt = (DbgModelTargetThread) this;
 			DbgThread thread = tt.getThread();
-			return thread.select();
+			return thread.setActive();
 		}
 		if (this instanceof DbgModelTargetStackFrame) {
 			DbgModelTargetStackFrame tf = (DbgModelTargetStackFrame) this;
-			TargetObjectRef ref = tf.getThread();
+			TargetObject ref = tf.getThread();
 			if (ref instanceof DbgModelTargetThread) {
 				DbgModelTargetThread tt = (DbgModelTargetThread) ref;
 				DbgThread thread = tt.getThread();
-				return thread.select();
+				return thread.setActive();
 			}
 		}
 		return CompletableFuture.completedFuture(null);

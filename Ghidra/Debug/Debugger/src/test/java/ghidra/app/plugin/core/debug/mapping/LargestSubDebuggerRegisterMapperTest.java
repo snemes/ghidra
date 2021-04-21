@@ -24,7 +24,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import ghidra.app.plugin.core.debug.gui.AbstractGhidraHeadedDebuggerGUITest;
-import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceTest;
 import ghidra.app.services.TraceRecorder;
 import ghidra.dbg.model.TestTargetRegister;
 import ghidra.dbg.target.*;
@@ -34,9 +33,6 @@ import ghidra.test.ToyProgramBuilder;
 import ghidra.trace.model.thread.TraceThread;
 
 public class LargestSubDebuggerRegisterMapperTest extends AbstractGhidraHeadedDebuggerGUITest {
-	static {
-		DebuggerModelServiceTest.addTestModelPathPatterns();
-	}
 
 	static class TestTargetMapper extends AbstractDebuggerTargetTraceMapper {
 		public TestTargetMapper(TargetObject target)
@@ -47,12 +43,12 @@ public class LargestSubDebuggerRegisterMapperTest extends AbstractGhidraHeadedDe
 
 		@Override
 		protected DebuggerRegisterMapper createRegisterMapper(
-				TargetRegisterContainer<?> registers) {
+				TargetRegisterContainer registers) {
 			return new LargestSubDebuggerRegisterMapper(cSpec, registers, false);
 		}
 
 		@Override
-		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory<?> memory) {
+		protected DebuggerMemoryMapper createMemoryMapper(TargetMemory memory) {
 			return new DefaultDebuggerMemoryMapper(language, memory.getModel());
 		}
 	}
@@ -132,7 +128,7 @@ public class LargestSubDebuggerRegisterMapperTest extends AbstractGhidraHeadedDe
 			Objects.requireNonNull(mb.testProcess1.regs.getCachedElements().get("RAX"));
 		Register lRAX = Objects.requireNonNull(getSLEIGH_X86_64_LANGUAGE().getRegister("RAX"));
 
-		TargetRegister<?> tReg = waitForValue(() -> rm.traceToTarget(lRAX));
+		TargetRegister tReg = waitForValue(() -> rm.traceToTarget(lRAX));
 		assertEquals(tRAX, tReg);
 	}
 
@@ -213,7 +209,7 @@ public class LargestSubDebuggerRegisterMapperTest extends AbstractGhidraHeadedDe
 			Objects.requireNonNull(mb.testProcess1.regs.getCachedElements().get("EAX"));
 		Register lRAX = Objects.requireNonNull(getSLEIGH_X86_64_LANGUAGE().getRegister("RAX"));
 
-		TargetRegister<?> tReg = waitForValue(() -> rm.traceToTarget(lRAX));
+		TargetRegister tReg = waitForValue(() -> rm.traceToTarget(lRAX));
 		assertEquals(tEAX, tReg);
 	}
 
@@ -265,7 +261,11 @@ public class LargestSubDebuggerRegisterMapperTest extends AbstractGhidraHeadedDe
 
 		rv = waitForValue(() -> rm.targetToTrace("eax", genBytes4()));
 		assertEquals(new RegisterValue(lRAX, new BigInteger("0000000089abcdef", 16)), rv);
-		assertNull(rm.targetToTrace("rax", genBytes8())); // Should no longer understand this one
+		/**
+		 * Should this be kept? I favoring a more accepting model makes sense, but I worry about
+		 * erroneous cases we might not be catching, by re-generating missing registers on the fly.
+		 */
+		// assertNull(rm.targetToTrace("rax", genBytes8())); // Should no longer understand this one
 
 		// This might be quite kick, back to 64-bit
 		mb.testProcess1.regs.addRegistersFromLanguage(getSLEIGH_X86_64_LANGUAGE(), r -> true);

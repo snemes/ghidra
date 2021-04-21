@@ -487,6 +487,45 @@ public interface DebuggerStaticMappingService {
 	}
 
 	/**
+	 * A {@code (shift,view)} pair for describing sets of mapped addresses
+	 */
+	public class ShiftAndAddressSetView {
+		private final long shift;
+		private final AddressSetView view;
+
+		public ShiftAndAddressSetView(long shift, AddressSetView view) {
+			this.shift = shift;
+			this.view = view;
+		}
+
+		/**
+		 * Get the shift from the source address set to this address set
+		 * 
+		 * <p>
+		 * The meaning depends on what returned this view. If this view is the "static" set, then
+		 * this shift describes what was added to the offset of the "dynamic" address to get a
+		 * particular address in this set. Note that since not all addresses from the requested
+		 * source set may have been mapped, you cannot simply compare min addresses to obtain this
+		 * shift. To "map back" to the source address from a destination address in this set,
+		 * <em>subtract</em> this shift.
+		 * 
+		 * @return the shift
+		 */
+		public long getShift() {
+			return shift;
+		}
+
+		/**
+		 * Get the destination address set view as mapped from the source address set
+		 * 
+		 * @return the address set
+		 */
+		public AddressSetView getAddressSetView() {
+			return view;
+		}
+	}
+
+	/**
 	 * Add a static mapping (relocation) from the given trace to the given program
 	 * 
 	 * <p>
@@ -637,7 +676,8 @@ public interface DebuggerStaticMappingService {
 	 * @param snap the source snap
 	 * @return a map of destination programs to corresponding computed destination address sets
 	 */
-	Map<Program, AddressSetView> getOpenMappedViews(Trace trace, AddressSetView set, long snap);
+	Map<Program, ShiftAndAddressSetView> getOpenMappedViews(Trace trace,
+			AddressSetView set, long snap);
 
 	/**
 	 * Find/compute all source address sets given a destination program address set
@@ -646,7 +686,8 @@ public interface DebuggerStaticMappingService {
 	 * @param set the destination address set, from which we are mapping back
 	 * @return a map of source traces to corresponding computed source address sets
 	 */
-	Map<TraceSnap, AddressSetView> getOpenMappedViews(Program program, AddressSetView set);
+	Map<TraceSnap, ShiftAndAddressSetView> getOpenMappedViews(Program program,
+			AddressSetView set);
 
 	/**
 	 * Open all destination programs in mappings intersecting the given source trace, address set,

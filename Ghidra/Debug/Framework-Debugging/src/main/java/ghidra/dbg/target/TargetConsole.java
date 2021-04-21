@@ -37,17 +37,8 @@ import ghidra.lifecycle.Experimental;
  */
 @Experimental
 @DebuggerTargetObjectIface("Console")
-public interface TargetConsole<T extends TargetConsole<T>> extends TypedTargetObject<T> {
+public interface TargetConsole extends TargetObject {
 	Charset CHARSET = Charset.forName("utf-8");
-
-	enum Private {
-		;
-		private abstract class Cls implements TargetConsole<Cls> {
-		}
-	}
-
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<Private.Cls> tclass = (Class) TargetConsole.class;
 
 	/**
 	 * For console output notifications, indicates whether it is normal or error output
@@ -63,33 +54,4 @@ public interface TargetConsole<T extends TargetConsole<T>> extends TypedTargetOb
 	 * @return a future which completes when the data is sent
 	 */
 	public CompletableFuture<Void> write(byte[] data);
-
-	public interface TargetConsoleListener extends TargetObjectListener {
-		/**
-		 * The console has produced output
-		 * 
-		 * @param console the console producing the output
-		 * @param channel identifies the "output stream", stdout or stderr
-		 * @param data the output data
-		 */
-		default void consoleOutput(TargetObject console, Channel channel, byte[] data) {
-		}
-	}
-
-	public interface TargetTextConsoleListener extends TargetConsoleListener {
-		/**
-		 * The console has produced output
-		 * 
-		 * @param console the console producing the output
-		 * @param channel identifies the "output stream", stdout or stderr
-		 * @param text the output text
-		 */
-		default void consoleOutput(TargetObject console, Channel channel, String text) {
-		}
-
-		@Override
-		default void consoleOutput(TargetObject console, Channel channel, byte[] data) {
-			consoleOutput(console, channel, new String(data, CHARSET));
-		}
-	}
 }

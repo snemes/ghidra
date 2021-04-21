@@ -23,12 +23,18 @@ import agent.dbgeng.model.iface2.DbgModelTargetSession;
 import agent.dbgeng.model.iface2.DbgModelTargetSessionAttributes;
 import ghidra.dbg.target.schema.*;
 
-@TargetObjectSchemaInfo(name = "SessionAttributes", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "Machine", type = DbgModelTargetSessionAttributesMachineImpl.class, fixed = true), //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "SessionAttributes",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(
+			name = "Machine",
+			type = DbgModelTargetSessionAttributesMachineImpl.class,
+			fixed = true),
+		@TargetAttributeType(type = Void.class)
+	})
 public class DbgModelTargetSessionAttributesImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetSessionAttributes {
 
@@ -45,7 +51,7 @@ public class DbgModelTargetSessionAttributesImpl extends DbgModelTargetObjectImp
 			ARCH_ATTRIBUTE_NAME, "x86_64", //
 			DEBUGGER_ATTRIBUTE_NAME, "dbgeng", //
 			OS_ATTRIBUTE_NAME, "Windows", //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			ENDIAN_ATTRIBUTE_NAME, "little" //
 		), "Initialized");
 
 		getManager().addEventsListener(this);
@@ -75,8 +81,8 @@ public class DbgModelTargetSessionAttributesImpl extends DbgModelTargetObjectImp
 	*/
 
 	@Override
-	public void refresh() {
-		machineAttributes.refresh();
+	public void refreshInternal() {
+		machineAttributes.refreshInternal();
 	}
 
 }

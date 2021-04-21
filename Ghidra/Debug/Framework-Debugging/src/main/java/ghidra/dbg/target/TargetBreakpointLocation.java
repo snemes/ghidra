@@ -16,8 +16,6 @@
 package ghidra.dbg.target;
 
 import ghidra.dbg.DebuggerTargetObjectIface;
-import ghidra.dbg.attributes.TargetObjectRefList;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
 import ghidra.dbg.target.schema.TargetAttributeType;
 import ghidra.program.model.address.Address;
 
@@ -26,22 +24,14 @@ import ghidra.program.model.address.Address;
  *
  * <p>
  * If the native debugger does not separate the concepts of specification and location, then
- * breakpoint objects should implement both the specification and location interfaces.
+ * breakpoint objects should implement both the specification and location interfaces. If the
+ * location is user-togglable independent of its specification, it should implement
+ * {@link TargetTogglable} as well.
  */
 @DebuggerTargetObjectIface("BreakpointLocation")
-public interface TargetBreakpointLocation<T extends TargetBreakpointLocation<T>>
-		extends TypedTargetObject<T> {
-	enum Private {
-		;
-		private abstract class Cls implements TargetBreakpointLocation<Cls> {
-		}
-	}
-
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<Private.Cls> tclass = (Class) TargetBreakpointLocation.class;
+public interface TargetBreakpointLocation extends TargetObject {
 
 	String ADDRESS_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "address";
-	String AFFECTS_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "affects";
 	// NOTE: address and length are treated separately (not using AddressRange)
 	// On GDB, e.g., the length may not be offered immediately.
 	String LENGTH_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "length";
@@ -55,21 +45,6 @@ public interface TargetBreakpointLocation<T extends TargetBreakpointLocation<T>>
 	@TargetAttributeType(name = ADDRESS_ATTRIBUTE_NAME, required = true, hidden = true)
 	public default Address getAddress() {
 		return getTypedAttributeNowByName(ADDRESS_ATTRIBUTE_NAME, Address.class, null);
-	}
-
-	/**
-	 * A list of object to which this breakpoint applies
-	 * 
-	 * <p>
-	 * This list may be empty, in which case, this location is conventionally assumed to apply
-	 * everywhere its container's location/scope suggests.
-	 * 
-	 * @return the list of affected objects' references
-	 */
-	@TargetAttributeType(name = AFFECTS_ATTRIBUTE_NAME, hidden = true)
-	public default TargetObjectRefList<?> getAffects() {
-		return getTypedAttributeNowByName(AFFECTS_ATTRIBUTE_NAME, TargetObjectRefList.class,
-			TargetObjectRefList.of());
 	}
 
 	/**
@@ -102,8 +77,7 @@ public interface TargetBreakpointLocation<T extends TargetBreakpointLocation<T>>
 	 * @return the reference to the specification
 	 */
 	@TargetAttributeType(name = SPEC_ATTRIBUTE_NAME, required = true, hidden = true)
-	public default TypedTargetObjectRef<? extends TargetBreakpointSpec<?>> getSpecification() {
-		return getTypedRefAttributeNowByName(SPEC_ATTRIBUTE_NAME, TargetBreakpointSpec.tclass,
-			null);
+	public default TargetBreakpointSpec getSpecification() {
+		return getTypedAttributeNowByName(SPEC_ATTRIBUTE_NAME, TargetBreakpointSpec.class, null);
 	}
 }

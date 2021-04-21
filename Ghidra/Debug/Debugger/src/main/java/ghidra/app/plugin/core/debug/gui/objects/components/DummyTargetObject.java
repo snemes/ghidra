@@ -20,8 +20,9 @@ import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.lang3.StringUtils;
 
+import ghidra.async.AsyncUtils;
+import ghidra.dbg.DebuggerModelListener;
 import ghidra.dbg.DebuggerObjectModel;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.TargetObject;
 
 public class DummyTargetObject implements TargetObject {
@@ -101,6 +102,11 @@ public class DummyTargetObject implements TargetObject {
 		return hash;
 	}
 
+	@Override
+	public TargetObject getParent() {
+		return parent;
+	}
+
 	public void addObject(TargetObject obj) {
 		String name = obj.getName();
 		if (name.contains("[")) {
@@ -137,11 +143,6 @@ public class DummyTargetObject implements TargetObject {
 	}
 
 	@Override
-	public CompletableFuture<? extends TargetObject> fetchParent() {
-		return CompletableFuture.completedFuture(parent);
-	}
-
-	@Override
 	public Object getProtocolID() {
 		return path;
 	}
@@ -157,13 +158,23 @@ public class DummyTargetObject implements TargetObject {
 	}
 
 	@Override
+	public CompletableFuture<Void> resync(boolean attributes, boolean elements) {
+		return AsyncUtils.NIL;
+	}
+
+	@Override
 	public CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchElements() {
 		// Why not completedFuture(elements)?
 		return CompletableFuture.supplyAsync(() -> elements);
 	}
 
 	@Override
-	public Map<String, ? extends TargetObjectRef> getCachedElements() {
+	public Map<String, ? extends TargetObject> getCachedElements() {
+		return elements;
+	}
+
+	@Override
+	public Map<String, ? extends TargetObject> getCallbackElements() {
 		return elements;
 	}
 
@@ -186,7 +197,6 @@ public class DummyTargetObject implements TargetObject {
 			if (type != null) {
 				addAttribute(TargetObject.TYPE_ATTRIBUTE_NAME, type);
 			}
-			addAttribute(TargetObject.UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.UNSOLICITED);
 		}
 		// Why not completedFuture(attributes)?
 		return CompletableFuture.supplyAsync(() -> attributes);
@@ -198,11 +208,16 @@ public class DummyTargetObject implements TargetObject {
 	}
 
 	@Override
-	public void addListener(TargetObjectListener l) {
+	public Map<String, ?> getCallbackAttributes() {
+		return attributes;
 	}
 
 	@Override
-	public void removeListener(TargetObjectListener l) {
+	public void addListener(DebuggerModelListener l) {
+	}
+
+	@Override
+	public void removeListener(DebuggerModelListener l) {
 	}
 
 	public String getJoinedPath() {

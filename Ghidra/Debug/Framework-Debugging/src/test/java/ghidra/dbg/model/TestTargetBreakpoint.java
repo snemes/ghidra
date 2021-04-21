@@ -18,18 +18,14 @@ package ghidra.dbg.model;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
-import ghidra.dbg.attributes.TargetObjectRefList;
 import ghidra.dbg.target.*;
-import ghidra.dbg.target.TargetBreakpointContainer.TargetBreakpointKindSet;
-import ghidra.dbg.util.CollectionUtils.Delta;
+import ghidra.dbg.target.TargetBreakpointSpecContainer.TargetBreakpointKindSet;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.Address;
 
 public class TestTargetBreakpoint
 		extends DefaultTestTargetObject<TestTargetBreakpoint, TestTargetBreakpointContainer>
-		implements TargetBreakpointSpec<TestTargetBreakpoint>,
-		TargetBreakpointLocation<TestTargetBreakpoint>,
-		TargetDeletable<TestTargetBreakpoint> {
+		implements TargetBreakpointSpec, TargetBreakpointLocation, TargetDeletable {
 
 	public TestTargetBreakpoint(TestTargetBreakpointContainer parent, int num, Address address,
 			int length, Set<TargetBreakpointKind> kinds) {
@@ -38,7 +34,6 @@ public class TestTargetBreakpoint
 		changeAttributes(List.of(), Map.of(
 			SPEC_ATTRIBUTE_NAME, this,
 			ADDRESS_ATTRIBUTE_NAME, address,
-			AFFECTS_ATTRIBUTE_NAME, TargetObjectRefList.of(parent.getImplParent()),
 			ENABLED_ATTRIBUTE_NAME, true,
 			EXPRESSION_ATTRIBUTE_NAME, address.toString(),
 			KINDS_ATTRIBUTE_NAME, TargetBreakpointKindSet.copyOf(kinds),
@@ -58,23 +53,17 @@ public class TestTargetBreakpoint
 
 	@Override
 	public CompletableFuture<Void> disable() {
-		Delta<?, ?> delta = changeAttributes(List.of(), Map.of(
+		changeAttributes(List.of(), Map.of(
 			ENABLED_ATTRIBUTE_NAME, false //
 		), "Disabled Breakpoint");
-		if (delta.added.containsKey(ENABLED_ATTRIBUTE_NAME)) {
-			listeners.fire(TargetBreakpointSpecListener.class).breakpointToggled(this, false);
-		}
 		return getModel().future(null);
 	}
 
 	@Override
 	public CompletableFuture<Void> enable() {
-		Delta<?, ?> delta = changeAttributes(List.of(), Map.of(
+		changeAttributes(List.of(), Map.of(
 			ENABLED_ATTRIBUTE_NAME, true //
 		), "Enabled Breakpoint");
-		if (delta.added.containsKey(ENABLED_ATTRIBUTE_NAME)) {
-			listeners.fire(TargetBreakpointSpecListener.class).breakpointToggled(this, true);
-		}
 		return getModel().future(null);
 	}
 

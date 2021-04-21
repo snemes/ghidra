@@ -20,11 +20,9 @@ import java.util.concurrent.CompletableFuture;
 
 import agent.dbgeng.manager.DbgEventsListenerAdapter;
 import agent.dbgeng.manager.DbgStackFrame;
-import agent.dbgeng.manager.cmd.DbgThreadSelectCommand;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.manager.impl.DbgThreadImpl;
 import agent.dbgeng.model.iface1.DbgModelSelectableObject;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.TargetStackFrame;
 import ghidra.program.model.address.Address;
@@ -32,7 +30,7 @@ import ghidra.program.model.address.AddressSpace;
 
 public interface DbgModelTargetStackFrame extends //
 		//DbgModelTargetObject,
-		TargetStackFrame<DbgModelTargetStackFrame>, //
+		TargetStackFrame, //
 		DbgEventsListenerAdapter, //
 		DbgModelSelectableObject {
 
@@ -50,10 +48,10 @@ public interface DbgModelTargetStackFrame extends //
 	public static final String FROM_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "from"; // TODO
 
 	@Override
-	public default CompletableFuture<Void> select() {
+	public default CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
 		DbgThreadImpl thread = manager.getCurrentThread();
-		return manager.execute(new DbgThreadSelectCommand(manager, thread, null));
+		return manager.setActiveThread(thread);
 	}
 
 	@Override
@@ -63,27 +61,32 @@ public interface DbgModelTargetStackFrame extends //
 			if (attrs == null) {
 				return CompletableFuture.completedFuture(null);
 			}
-			TargetObject attributes = (TargetObject) attrs.get("Attributes");
+			DbgModelTargetObject attributes = (DbgModelTargetObject) attrs.get("Attributes");
 			if (attributes == null) {
 				return CompletableFuture.completedFuture(null);
 			}
-			return attributes.fetchAttributes(true);
-		}).thenCompose(subattrs -> {
-			if (subattrs == null) {
-				return CompletableFuture.completedFuture(null);
-			}
-			TargetObject frameNumber = (TargetObject) subattrs.get("FrameNumber");
-			return frameNumber.fetchAttribute(VALUE_ATTRIBUTE_NAME).thenCompose(noval -> {
-				String nostr = noval.toString();
-				TargetObject instructionOffset = (TargetObject) subattrs.get("InstructionOffset");
-				return instructionOffset.fetchAttribute(VALUE_ATTRIBUTE_NAME).thenAccept(pcval -> {
-					String oldval = (String) getCachedAttribute(DISPLAY_ATTRIBUTE_NAME);
-					String pcstr = pcval.toString();
-					long pc = Long.parseUnsignedLong(pcstr, 16);
-					map.put(PC_ATTRIBUTE_NAME, space.getAddress(pc));
-					String display = String.format("#%s 0x%s", nostr, pcstr);
-					map.put(DISPLAY_ATTRIBUTE_NAME, display);
-					setModified(map, !display.equals(oldval));
+			return attributes.requestAugmentedAttributes().thenCompose(ax -> {
+				Map<String, ?> subattrs = attributes.getCachedAttributes();
+				if (subattrs == null) {
+					return CompletableFuture.completedFuture(null);
+				}
+				DbgModelTargetObject frameNumber =
+					(DbgModelTargetObject) subattrs.get("FrameNumber");
+				return frameNumber.requestAugmentedAttributes().thenCompose(bx -> {
+					Object noval = frameNumber.getCachedAttribute(VALUE_ATTRIBUTE_NAME);
+					String nostr = noval.toString();
+					DbgModelTargetObject instructionOffset =
+						(DbgModelTargetObject) subattrs.get("InstructionOffset");
+					return instructionOffset.requestAugmentedAttributes().thenAccept(cx -> {
+						String oldval = (String) getCachedAttribute(DISPLAY_ATTRIBUTE_NAME);
+						Object pcval = instructionOffset.getCachedAttribute(VALUE_ATTRIBUTE_NAME);
+						String pcstr = pcval.toString();
+						long pc = Long.parseUnsignedLong(pcstr, 16);
+						map.put(PC_ATTRIBUTE_NAME, space.getAddress(pc));
+						String display = String.format("#%s 0x%s", nostr, pcstr);
+						map.put(DISPLAY_ATTRIBUTE_NAME, display);
+						setModified(map, !display.equals(oldval));
+					});
 				});
 			});
 		});
@@ -91,7 +94,7 @@ public interface DbgModelTargetStackFrame extends //
 
 	public void setFrame(DbgStackFrame frame);
 
-	public TargetObjectRef getThread();
+	public TargetObject getThread();
 
 	public Address getPC();
 

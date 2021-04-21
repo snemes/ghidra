@@ -20,11 +20,9 @@ import java.util.concurrent.CompletableFuture;
 import com.google.protobuf.ByteString;
 
 import ghidra.dbg.gadp.protocol.Gadp;
-import ghidra.dbg.gadp.util.GadpValueUtils;
 import ghidra.dbg.target.TargetConsole;
 
-public interface GadpClientTargetConsole
-		extends GadpClientTargetObject, TargetConsole<GadpClientTargetConsole> {
+public interface GadpClientTargetConsole extends GadpClientTargetObject, TargetConsole {
 
 	@Override
 	default CompletableFuture<Void> write(byte[] data) {

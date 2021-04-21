@@ -26,14 +26,17 @@ import ghidra.dbg.target.TargetRegisterContainer;
 import ghidra.dbg.target.schema.*;
 import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "TargetRegisterContainer", elements = { //
-	@TargetElementType(type = JdiModelTargetRegister.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "TargetRegisterContainer",
+	elements = {
+		@TargetElementType(type = JdiModelTargetRegister.class)
+	},
+	attributes = {
+		@TargetAttributeType(type = Void.class)
+	},
+	canonicalContainer = true)
 public class JdiModelTargetRegisterContainer extends JdiModelTargetObjectImpl
-		implements TargetRegisterBank<JdiModelTargetRegisterContainer>,
-		TargetRegisterContainer<JdiModelTargetRegisterContainer> {
+		implements TargetRegisterBank, TargetRegisterContainer {
 
 	private final Map<String, JdiModelTargetRegister> registersByName = new HashMap<>();
 
@@ -118,7 +121,7 @@ public class JdiModelTargetRegisterContainer extends JdiModelTargetObjectImpl
 			map.put(retAddr.getIndex(), bytes);
 		}
 		if (!map.isEmpty()) {
-			listeners.fire(TargetRegisterBankListener.class).registersUpdated(this, map);
+			listeners.fire.registersUpdated(this, map);
 		}
 		return CompletableFuture.completedFuture(map);
 	}

@@ -15,15 +15,23 @@
  */
 package agent.dbgeng.model.iface2;
 
+import java.math.BigInteger;
+
 import agent.dbgeng.manager.impl.DbgRegister;
 import ghidra.dbg.target.TargetRegister;
+import ghidra.dbg.util.ConversionUtils;
 
-public interface DbgModelTargetRegister
-		extends DbgModelTargetObject, TargetRegister<DbgModelTargetRegister> {
+public interface DbgModelTargetRegister extends DbgModelTargetObject, TargetRegister {
 
 	@Override
 	public int getBitLength();
 
 	public DbgRegister getRegister();
+
+	public default byte[] getBytes() {
+		String val = (String) getCachedAttributes().get(VALUE_ATTRIBUTE_NAME);
+		BigInteger value = new BigInteger(val, 16);
+		return ConversionUtils.bigIntegerToBytes(16, value);
+	}
 
 }

@@ -27,17 +27,18 @@ import ghidra.dbg.target.TargetInterpreter;
  * 
  * @param <T> type for this
  */
-public interface DbgModelTargetInterpreter<T extends TargetInterpreter<T>>
-		extends DbgModelTargetObject, TargetInterpreter<T> {
+public interface DbgModelTargetInterpreter extends DbgModelTargetObject, TargetInterpreter {
+
+	public static final String DBG_PROMPT = "(kd)";
 
 	@Override
 	public default CompletableFuture<Void> execute(String cmd) {
-		return getManager().console(cmd);
+		return getModel().gateFuture(getManager().console(cmd));
 	}
 
 	@Override
 	public default CompletableFuture<String> executeCapture(String cmd) {
-		return getManager().consoleCapture(cmd);
+		return getModel().gateFuture(getManager().consoleCapture(cmd));
 	}
 
 }

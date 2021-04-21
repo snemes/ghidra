@@ -30,15 +30,18 @@ import ghidra.async.AsyncUtils;
 import ghidra.async.TypeSpec;
 import ghidra.dbg.target.schema.*;
 
-@TargetObjectSchemaInfo(name = "SessionAttributesMachine", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "Arch", type = String.class), //
-	@TargetAttributeType(name = "Debugger", type = String.class), //
-	@TargetAttributeType(name = "OS", type = String.class), //
-	@TargetAttributeType(name = "Mode", type = String.class), //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "SessionAttributesMachine",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(name = "Arch", type = String.class),
+		@TargetAttributeType(name = "Debugger", type = String.class),
+		@TargetAttributeType(name = "OS", type = String.class),
+		@TargetAttributeType(name = "Mode", type = String.class),
+		@TargetAttributeType(type = Void.class)
+	})
 public class DbgModelTargetSessionAttributesMachineImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetSessionAttributesMachine {
 
@@ -60,15 +63,15 @@ public class DbgModelTargetSessionAttributesMachineImpl extends DbgModelTargetOb
 
 	@Override
 	public void sessionAdded(DbgSession session, DbgCause cause) {
-		refresh();
+		refreshInternal();
 	}
 
 	@Override
 	public void processAdded(DbgProcess process, DbgCause cause) {
-		refresh();
+		refreshInternal();
 	}
 
-	public void refresh() {
+	public void refreshInternal() {
 		DebugControl control = getManager().getControl();
 		int processorType = control.getActualProcessorType();
 		if (processorType < 0) {

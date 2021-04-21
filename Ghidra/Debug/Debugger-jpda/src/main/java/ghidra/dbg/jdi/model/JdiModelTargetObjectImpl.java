@@ -46,7 +46,7 @@ public class JdiModelTargetObjectImpl extends
 	private boolean modified;
 
 	public JdiModelTargetObjectImpl(JdiModelTargetObject parent, String id) {
-		super(parent.getModel(), parent, id, "Object");
+		super(parent.getModelImpl(), parent, id, "Object");
 		this.impl = parent.getModelImpl();
 		this.mirror = (Mirror) parent.getObject();
 		this.object = null;
@@ -58,14 +58,13 @@ public class JdiModelTargetObjectImpl extends
 		}
 
 		changeAttributes(List.of(), List.of(), Map.of( //
-			DISPLAY_ATTRIBUTE_NAME, display = getDisplay(), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, display = getDisplay() //
 		), "Initialized");
 	}
 
 	public JdiModelTargetObjectImpl(JdiModelTargetObject parent, String id, Object object,
 			boolean isElement) {
-		super(parent.getModel(), parent, isElement ? keyObject(id) : id, "Object");
+		super(parent.getModelImpl(), parent, isElement ? keyObject(id) : id, "Object");
 		this.impl = parent.getModelImpl();
 		this.mirror = object instanceof Mirror ? (Mirror) object : null;
 		this.object = object;
@@ -82,13 +81,12 @@ public class JdiModelTargetObjectImpl extends
 		}
 
 		changeAttributes(List.of(), List.of(), Map.of( //
-			DISPLAY_ATTRIBUTE_NAME, display = getDisplay(), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, display = getDisplay() //
 		), "Initialized");
 	}
 
 	public JdiModelTargetObjectImpl(JdiModelTargetSectionContainer parent) {
-		super(parent.getModel(), parent, keyObject("NULL_SPACE"), "Object");
+		super(parent.getModelImpl(), parent, keyObject("NULL_SPACE"), "Object");
 		this.impl = parent.getModelImpl();
 		this.mirror = parent.mirror;
 		this.display = "NULL_SPACE";
@@ -170,7 +168,6 @@ public class JdiModelTargetObjectImpl extends
 			changeAttributes(List.of(), List.of(), Map.of( //
 				MODIFIED_ATTRIBUTE_NAME, modified //
 			), "Refreshed");
-			listeners.fire.displayChanged(this, getDisplay());
 		}
 	}
 
@@ -179,4 +176,10 @@ public class JdiModelTargetObjectImpl extends
 			MODIFIED_ATTRIBUTE_NAME, false //
 		), "Refreshed");
 	}
+
+	public TargetObject searchForSuitable(Class<? extends TargetObject> type) {
+		List<String> pathToClass = model.getRootSchema().searchForSuitable(type, path);
+		return model.getModelObject(pathToClass);
+	}
+
 }

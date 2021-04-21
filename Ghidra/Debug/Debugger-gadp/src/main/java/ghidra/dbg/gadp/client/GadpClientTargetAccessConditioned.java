@@ -15,15 +15,9 @@
  */
 package ghidra.dbg.gadp.client;
 
-import ghidra.dbg.gadp.client.annot.GadpAttributeChangeCallback;
 import ghidra.dbg.target.TargetAccessConditioned;
 
 public interface GadpClientTargetAccessConditioned
-		extends GadpClientTargetObject, TargetAccessConditioned<GadpClientTargetAccessConditioned> {
-
-	@GadpAttributeChangeCallback(ACCESSIBLE_ATTRIBUTE_NAME)
-	default void handleAccessibleChanged(Object accessible) {
-		getDelegate().listeners.fire(TargetAccessibilityListener.class)
-				.accessibilityChanged(this, fromObj(accessible));
-	}
+		extends GadpClientTargetObject, TargetAccessConditioned {
+	// Nothing to add
 }

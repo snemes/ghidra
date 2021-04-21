@@ -184,8 +184,9 @@ public class DBTraceRegisterContextManager extends
 	@Override
 	public RegisterValue getValueWithDefault(Language language, Register register, long snap,
 			Address address) {
-		return delegateRead(address.getAddressSpace(),
-			m -> m.getValueWithDefault(language, register, snap, address));
+		return delegateReadOr(address.getAddressSpace(),
+			m -> m.getValueWithDefault(language, register, snap, address),
+			() -> getDefaultValue(language, register, address));
 	}
 
 	@Override

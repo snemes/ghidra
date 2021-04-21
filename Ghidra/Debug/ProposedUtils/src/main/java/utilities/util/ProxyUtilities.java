@@ -75,7 +75,7 @@ public enum ProxyUtilities {
 	public static <T, U> T composeOnDelegate(Class<T> iface, T delegate,
 			List<Class<? extends U>> mixins, MethodHandles.Lookup lookup) {
 		Class<?>[] allIface = new Class<?>[1 + mixins.size()];
-		mixins.toArray(allIface);
+		allIface = mixins.toArray(allIface);
 		allIface[allIface.length - 1] = iface;
 		ComposedHandler handler = new ComposedHandler(delegate, lookup);
 		return (T) Proxy.newProxyInstance(delegate.getClass().getClassLoader(), allIface, handler);
@@ -110,8 +110,8 @@ public enum ProxyUtilities {
 			/**
 			 * NOTE: I cannot replace the delegate with the proxy here (say, to prevent accidental
 			 * leakage) for at least two reasons. 1) I may want direct access to the delegate. 2) It
-			 * wouldn't work when the return value itself wraps or will provde the delegate (e.g., a
-			 * future).
+			 * wouldn't work when the return value itself wraps or will provide the delegate (e.g.,
+			 * a future).
 			 */
 			return result;
 		}

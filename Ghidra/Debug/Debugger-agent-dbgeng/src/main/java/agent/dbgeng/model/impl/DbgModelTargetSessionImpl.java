@@ -22,22 +22,33 @@ import java.util.concurrent.CompletableFuture;
 import agent.dbgeng.dbgeng.DebugSessionId;
 import agent.dbgeng.manager.*;
 import agent.dbgeng.model.iface1.DbgModelSelectableObject;
+import agent.dbgeng.model.iface1.DbgModelTargetInterpreter;
 import agent.dbgeng.model.iface2.DbgModelTargetProcessContainer;
 import agent.dbgeng.model.iface2.DbgModelTargetSession;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 
-@TargetObjectSchemaInfo(name = "Session", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "Attributes", type = DbgModelTargetSessionAttributesImpl.class, fixed = true), //
-	@TargetAttributeType(name = "Processes", type = DbgModelTargetProcessContainerImpl.class, required = true, fixed = true), //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "Session",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(
+			name = "Attributes",
+			type = DbgModelTargetSessionAttributesImpl.class,
+			fixed = true),
+		@TargetAttributeType(
+			name = "Processes",
+			type = DbgModelTargetProcessContainerImpl.class,
+			required = true,
+			fixed = true),
+		@TargetAttributeType(type = Void.class) })
 public class DbgModelTargetSessionImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetSession {
 
 	protected static final String DBG_PROMPT = "(kd)";
+	private Integer base = 16;
+
 	// NB: This should almost certainly always be implemented by the root of the object tree
 
 	protected static String indexSession(DebugSessionId debugSystemId) {
@@ -61,6 +72,7 @@ public class DbgModelTargetSessionImpl extends DbgModelTargetObjectImpl
 	public DbgModelTargetSessionImpl(DbgModelTargetSessionContainerImpl sessions,
 			DbgSession session) {
 		super(sessions.getModel(), sessions, keySession(session), "Session");
+		this.getModel().addModelObject(session, this);
 
 		this.attributes = new DbgModelTargetSessionAttributesImpl(this);
 		this.processes = new DbgModelTargetProcessContainerImpl(this);
@@ -69,17 +81,16 @@ public class DbgModelTargetSessionImpl extends DbgModelTargetObjectImpl
 			attributes, //
 			processes //
 		), Map.of( //
-			ACCESSIBLE_ATTRIBUTE_NAME, true, //
-			PROMPT_ATTRIBUTE_NAME, DBG_PROMPT, //
-			STATE_ATTRIBUTE_NAME, TargetExecutionState.ALIVE, //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			ACCESSIBLE_ATTRIBUTE_NAME, accessible, //
+			PROMPT_ATTRIBUTE_NAME, DbgModelTargetInterpreter.DBG_PROMPT, //
+			STATE_ATTRIBUTE_NAME, TargetExecutionState.ALIVE //
 		), "Initialized");
 
 		getManager().addEventsListener(this);
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
+	public CompletableFuture<Void> setActive() {
 		//DbgManagerImpl manager = getManager();
 		//DbgProcessImpl process = manager.getCurrentProcess();
 		//return manager.execute(new DbgProcessSelectCommand(manager, process));
@@ -87,8 +98,8 @@ public class DbgModelTargetSessionImpl extends DbgModelTargetObjectImpl
 	}
 
 	@Override
-	public TargetAccessibility getAccessibility() {
-		return accessibility;
+	public boolean isAccessible() {
+		return accessible;
 	}
 
 	@Override

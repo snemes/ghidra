@@ -25,8 +25,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.reflect.TypeUtils;
 
 import ghidra.dbg.DebuggerTargetObjectIface;
-import ghidra.dbg.attributes.TargetObjectRef;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.DefaultTargetObjectSchema.DefaultAttributeSchema;
 import ghidra.dbg.target.schema.EnumerableTargetObjectSchema.MinimalSchemaContext;
@@ -62,7 +60,7 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 		return bounds.filter(base::isAssignableFrom).map(c -> c.asSubclass(base));
 	}
 
-	static Stream<Class<?>> resolveUpperBounds(Class<? extends TargetObjectRef> cls, Type type) {
+	static Stream<Class<?>> resolveUpperBounds(Class<? extends TargetObject> cls, Type type) {
 		if (type == null) {
 			return Stream.empty();
 		}
@@ -100,7 +98,7 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 	}
 
 	static Set<Class<? extends TargetObject>> getBoundsOfFetchElements(
-			Class<? extends TargetObjectRef> cls) {
+			Class<? extends TargetObject> cls) {
 		try {
 			Method method = cls.getMethod("fetchElements", new Class<?>[] { boolean.class });
 			Type ret = method.getGenericReturnType();
@@ -125,20 +123,9 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 		if (TargetObject.class.isAssignableFrom(retCls)) {
 			return Set.of(retCls.asSubclass(TargetObject.class));
 		}
-		Type ret = getter.getGenericReturnType();
-		Map<TypeVariable<?>, Type> argsTtor =
-			TypeUtils.getTypeArguments(ret, TypedTargetObjectRef.class);
-		if (argsTtor != null) {
-			Type typeTtorT = argsTtor.get(TypedTargetObjectRef.class.getTypeParameters()[0]);
-
-			return filterBounds(TargetObject.class, resolveUpperBounds(cls, typeTtorT))
-					.collect(Collectors.toSet());
-		}
-		if (TargetObjectRef.class.isAssignableFrom(retCls)) {
-			return Set.of(TargetObject.class);
-		}
+		// NB. Caller does check for primitive
 		throw new IllegalArgumentException("Getter " + getter +
-			" for attribute must return primitive or subclass of " + TargetObjectRef.class);
+			" for attribute must return primitive or subclass of " + TargetObject.class);
 	}
 
 	protected final Map<Class<? extends TargetObject>, SchemaName> namesByClass =
@@ -146,7 +133,13 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 	protected final Map<Class<? extends TargetObject>, TargetObjectSchema> schemasByClass =
 		new LinkedHashMap<>();
 
-	protected SchemaName nameFromAnnotatedClass(Class<? extends TargetObject> cls) {
+	/**
+	 * Get the schema name for an annotated target object class
+	 * 
+	 * @param cls the class
+	 * @return the schema name
+	 */
+	public SchemaName nameFromAnnotatedClass(Class<? extends TargetObject> cls) {
 		synchronized (namesByClass) {
 			TargetObjectSchemaInfo info = cls.getAnnotation(TargetObjectSchemaInfo.class);
 			if (info == null) {
@@ -216,73 +209,97 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 					" annotation, or that the class was referenced by accident.");
 			}
 			return schemasByClass.computeIfAbsent(cls, c -> {
-				TargetObjectSchemaInfo info = cls.getAnnotation(TargetObjectSchemaInfo.class);
-				if (info == null) {
-					throw new IllegalArgumentException("Class " + cls + " is not annotated with @" +
-						TargetObjectSchemaInfo.class.getSimpleName());
-				}
-				SchemaBuilder builder = builder(name);
-
-				Set<Class<?>> allParents = ReflectionUtilities.getAllParents(cls);
-				for (Class<?> parent : allParents) {
-					DebuggerTargetObjectIface ifaceAnnot =
-						parent.getAnnotation(DebuggerTargetObjectIface.class);
-					if (ifaceAnnot != null) {
-						builder.addInterface(parent.asSubclass(TargetObject.class));
-					}
-				}
-
-				builder.setCanonicalContainer(info.canonicalContainer());
-
-				boolean sawDefaultElementType = false;
-				for (TargetElementType et : info.elements()) {
-					if (et.index().equals("")) {
-						sawDefaultElementType = true;
-					}
-					builder.addElementSchema(et.index(), nameFromClass(et.type()), et);
-				}
-				if (!sawDefaultElementType) {
-					Set<Class<? extends TargetObject>> bounds = getBoundsOfFetchElements(cls);
-					if (bounds.size() != 1) {
-						// TODO: Compile-time validation?
-						throw new IllegalArgumentException(
-							"Could not identify unique element class (" + bounds + ") for " + cls);
-					}
-					else {
-						Class<? extends TargetObject> bound = bounds.iterator().next();
-						SchemaName schemaName;
-						try {
-							schemaName = nameFromClass(bound);
-						}
-						catch (IllegalArgumentException e) {
-							throw new IllegalArgumentException(
-								"Could not get schema name from bound " + bound + " of " + cls +
-									".fetchElements()",
-								e);
-						}
-						builder.setDefaultElementSchema(schemaName);
-					}
-				}
-
-				addPublicMethodsFromClass(builder, cls, cls);
-				for (Class<?> parent : allParents) {
-					if (TargetObject.class.isAssignableFrom(parent)) {
-						addPublicMethodsFromClass(builder, parent.asSubclass(TargetObject.class),
-							cls);
-					}
-				}
-				for (TargetAttributeType at : info.attributes()) {
-					AnnotatedAttributeSchema attrSchema = attributeSchemaFromAnnotation(at);
-					AttributeSchema exists = builder.getAttributeSchema(attrSchema.getName());
-					if (exists != null) {
-						attrSchema = attrSchema.lower((AnnotatedAttributeSchema) exists);
-					}
-					builder.replaceAttributeSchema(attrSchema, at);
-				}
+				SchemaBuilder builder = builderForClass(cls, name);
 
 				return builder.buildAndAdd();
 			});
 		}
+	}
+
+	/**
+	 * Get a populated builder for an annotated target object class
+	 * 
+	 * @param cls the class
+	 * @return the builder
+	 */
+	public SchemaBuilder builderForClass(Class<? extends TargetObject> cls) {
+		return builderForClass(cls, nameFromAnnotatedClass(cls));
+	}
+
+	/**
+	 * Get a populated builder for an annotated target object class
+	 * 
+	 * @param cls the class
+	 * @param name a custom name for the schema
+	 * @return the builder
+	 */
+	public SchemaBuilder builderForClass(Class<? extends TargetObject> cls, SchemaName name) {
+		TargetObjectSchemaInfo info = cls.getAnnotation(TargetObjectSchemaInfo.class);
+		if (info == null) {
+			throw new IllegalArgumentException("Class " + cls + " is not annotated with @" +
+				TargetObjectSchemaInfo.class.getSimpleName());
+		}
+		SchemaBuilder builder = builder(name);
+
+		Set<Class<?>> allParents = ReflectionUtilities.getAllParents(cls);
+		for (Class<?> parent : allParents) {
+			DebuggerTargetObjectIface ifaceAnnot =
+				parent.getAnnotation(DebuggerTargetObjectIface.class);
+			if (ifaceAnnot != null) {
+				builder.addInterface(parent.asSubclass(TargetObject.class));
+			}
+		}
+
+		builder.setCanonicalContainer(info.canonicalContainer());
+		builder.setElementResyncMode(info.elementResync());
+		builder.setAttributeResyncMode(info.attributeResync());
+
+		boolean sawDefaultElementType = false;
+		for (TargetElementType et : info.elements()) {
+			if (et.index().equals("")) {
+				sawDefaultElementType = true;
+			}
+			builder.addElementSchema(et.index(), nameFromClass(et.type()), et);
+		}
+		if (!sawDefaultElementType) {
+			Set<Class<? extends TargetObject>> bounds = getBoundsOfFetchElements(cls);
+			if (bounds.size() != 1) {
+				// TODO: Compile-time validation?
+				throw new IllegalArgumentException(
+					"Could not identify unique element class (" + bounds + ") for " + cls);
+			}
+			else {
+				Class<? extends TargetObject> bound = bounds.iterator().next();
+				SchemaName schemaName;
+				try {
+					schemaName = nameFromClass(bound);
+				}
+				catch (IllegalArgumentException e) {
+					throw new IllegalArgumentException(
+						"Could not get schema name from bound " + bound + " of " + cls +
+							".fetchElements()",
+						e);
+				}
+				builder.setDefaultElementSchema(schemaName);
+			}
+		}
+
+		addPublicMethodsFromClass(builder, cls, cls);
+		for (Class<?> parent : allParents) {
+			if (TargetObject.class.isAssignableFrom(parent)) {
+				addPublicMethodsFromClass(builder, parent.asSubclass(TargetObject.class),
+					cls);
+			}
+		}
+		for (TargetAttributeType at : info.attributes()) {
+			AnnotatedAttributeSchema attrSchema = attributeSchemaFromAnnotation(at);
+			AttributeSchema exists = builder.getAttributeSchema(attrSchema.getName());
+			if (exists != null) {
+				attrSchema = attrSchema.lower((AnnotatedAttributeSchema) exists);
+			}
+			builder.replaceAttributeSchema(attrSchema, at);
+		}
+		return builder;
 	}
 
 	protected String attributeNameFromBean(String beanName, boolean isBool) {
@@ -359,6 +376,16 @@ public class AnnotatedSchemaContext extends DefaultSchemaContext {
 		return true;
 	}
 
+	/**
+	 * Get the schema for an annotated target object class
+	 * 
+	 * <p>
+	 * This will ensure all the schemas of the given class' dependencies are constructed and added
+	 * to the context.
+	 * 
+	 * @param cls the class
+	 * @return the schema
+	 */
 	public TargetObjectSchema getSchemaForClass(Class<? extends TargetObject> cls) {
 		TargetObjectSchema schema = fromAnnotatedClass(cls);
 		fillDependencies();

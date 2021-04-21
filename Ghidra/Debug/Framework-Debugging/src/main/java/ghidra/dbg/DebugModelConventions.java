@@ -15,18 +15,17 @@
  */
 package ghidra.dbg;
 
+import java.lang.invoke.MethodHandles;
 import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import ghidra.async.*;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.*;
-import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibility;
-import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibilityListener;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
-import ghidra.dbg.target.TargetObject.TargetObjectListener;
+import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.util.PathPredicates;
 import ghidra.dbg.util.PathUtils;
 import ghidra.dbg.util.PathUtils.PathComparator;
 import ghidra.util.Msg;
@@ -50,90 +49,6 @@ public enum DebugModelConventions {
 			Msg.error(originator, "Error in " + cbName, e);
 		}
 		return AsyncUtils.NIL;
-	}
-
-	/**
-	 * Fetch everything in a particular collection of refs
-	 * 
-	 * <p>
-	 * This was added as part of GP-251. Where there are uses of this method, devs should consider
-	 * opportunities to be more selective in what they fetch.
-	 * 
-	 * @param <K> the type of keys
-	 * @param refs the collection of refs
-	 * @return the collection of objects
-	 * @deprecated Just to draw attention to it
-	 */
-	@Deprecated(forRemoval = false)
-	public static <K> CompletableFuture<Map<K, TargetObject>> fetchAll(
-			Map<K, ? extends TargetObjectRef> refs) {
-		if (refs == null) {
-			return AsyncUtils.nil();
-		}
-		Map<K, TargetObject> result = new HashMap<>();
-		AsyncFence fence = new AsyncFence();
-		for (Map.Entry<K, ? extends TargetObjectRef> ent : refs.entrySet()) {
-			fence.include(ent.getValue().fetch().thenAccept(obj -> {
-				synchronized (result) {
-					result.put(ent.getKey(), obj);
-				}
-			}));
-		}
-		return fence.ready().thenApply(__ -> result);
-	}
-
-	/**
-	 * Fetch all non-link refs in an attribute map
-	 * 
-	 * <p>
-	 * This was added as part of GP-251. Where there are uses of this method, devs should consider
-	 * opportunities to be more selective in what they fetch.
-	 * 
-	 * @param refs the attribute map
-	 * @return the attribute map, but with non-link refs fetched as objects
-	 * @deprecated Just to draw attention to it
-	 */
-	@Deprecated(forRemoval = false)
-	public static CompletableFuture<Map<String, ?>> fetchObjAttrs(TargetObjectRef parent,
-			Map<String, ?> attrs) {
-		if (attrs == null) {
-			return AsyncUtils.nil();
-		}
-		Map<String, Object> result = new HashMap<>();
-		AsyncFence fence = new AsyncFence();
-		for (Map.Entry<String, ?> ent : attrs.entrySet()) {
-			String name = ent.getKey();
-			Object a = ent.getValue();
-			if (!(a instanceof TargetObjectRef)) {
-				synchronized (result) {
-					result.put(name, a);
-				}
-				continue;
-			}
-			TargetObjectRef ref = (TargetObjectRef) a;
-			if (PathUtils.isLink(parent.getPath(), ent.getKey(), ref.getPath())) {
-				synchronized (result) {
-					result.put(name, a);
-				}
-				continue;
-			}
-			fence.include(ref.fetch().thenAccept(obj -> {
-				synchronized (result) {
-					result.put(name, obj);
-				}
-			}));
-		}
-		return fence.ready().thenApply(__ -> result);
-	}
-
-	/**
-	 * Search for a suitable object implementing the given interface, starting at a given seed.
-	 * 
-	 * @see #findSuitable(Class, TargetObject)
-	 */
-	public static <T extends TargetObject> CompletableFuture<T> findSuitable(Class<T> iface,
-			TargetObjectRef seed) {
-		return seed.fetch().thenCompose(obj -> findSuitable(iface, obj));
 	}
 
 	/**
@@ -166,7 +81,9 @@ public enum DebugModelConventions {
 	 * @param seed the starting object
 	 * @return a future which completes with the discovered object or completes with null, if not
 	 *         found.
+	 * @deprecated use {@link #suitable(Class, TargetObject)} instead
 	 */
+	@Deprecated(forRemoval = true)
 	public static <T extends TargetObject> CompletableFuture<T> findSuitable(Class<T> iface,
 			TargetObject seed) {
 		if (iface.isAssignableFrom(seed.getClass())) {
@@ -183,14 +100,63 @@ public enum DebugModelConventions {
 		return findParentSuitable(iface, seed);
 	}
 
+	/**
+	 * Search for a suitable object implementing the given interface, starting at a given seed.
+	 * 
+	 * <p>
+	 * This performs an n-up-m-down search starting at the given seed, seeking an object which
+	 * implements the given interface. The m-down part is only applied from objects implementing
+	 * {@link TargetAggregate}. See {@link TargetObject} for the specifics of expected model
+	 * conventions.
+	 * 
+	 * <p>
+	 * Note that many a debugger target object interface type require a self-referential {@code T}
+	 * parameter referring to the implementing class type. To avoid referring to a particular
+	 * implementation, it becomes necessary to leave {@code T} as {@code ?}, but that can never
+	 * satisfy the constraints of this method. To work around this, such interfaces must provide a
+	 * static {@code tclass} field, which can properly satisfy the type constraints of this method
+	 * for such self-referential type variables. The returned value must be ascribed to the
+	 * wild-carded type, because the work-around involves a hidden class. Perhaps a little verbose
+	 * (hey, it's Java!), the following is the recommended pattern, e.g., to discover the
+	 * environment of a given process:
+	 * 
+	 * <pre>
+	 * CompletableFuture<? extends TargetEnvironment<?>> futureEnv =
+	 * 	DebugModelConventions.suitable(TargetEnvironment.tclass, aProcess);
+	 * </pre>
+	 * 
+	 * @param <T> the desired interface type.
+	 * @param iface the (probably {@code tclass}) of the desired interface type
+	 * @param seed the starting object
+	 * @return a future which completes with the discovered object or completes with null, if not
+	 *         found.
+	 */
+	public static <T extends TargetObject> CompletableFuture<T> suitable(Class<T> iface,
+			TargetObject seed) {
+		List<String> path =
+			seed.getModel().getRootSchema().searchForSuitable(iface, seed.getPath());
+		if (path == null) {
+			return null;
+		}
+		return seed.getModel().fetchModelObject(path).thenApply(obj -> iface.cast(obj));
+	}
+
+	public static <T extends TargetObject> T ancestor(Class<T> iface, TargetObject seed) {
+		List<String> path =
+			seed.getModel().getRootSchema().searchForAncestor(iface, seed.getPath());
+		if (path == null) {
+			return null;
+		}
+		return iface.cast(seed.getModel().getModelObject(path));
+	}
+
 	private static <T extends TargetObject> CompletableFuture<T> findParentSuitable(Class<T> iface,
 			TargetObject obj) {
-		return obj.fetchParent().thenCompose(parent -> {
-			if (parent == null) {
-				return AsyncUtils.nil();
-			}
-			return findSuitable(iface, parent);
-		});
+		TargetObject parent = obj.getParent();
+		if (parent == null) {
+			return AsyncUtils.nil();
+		}
+		return findSuitable(iface, parent);
 	}
 
 	/**
@@ -239,25 +205,21 @@ public enum DebugModelConventions {
 			if (!(seed instanceof TargetAggregate)) {
 				continue;
 			}
-			fence.include(seed.fetchAttributes().thenCompose(attributes -> {
-				AsyncFence f2 = new AsyncFence();
-				for (Map.Entry<String, ?> ent : attributes.entrySet()) {
-					Object val = ent.getValue();
-					if (!(val instanceof TargetObjectRef)) {
-						continue;
-					}
-					TargetObjectRef ref = (TargetObjectRef) val;
-					if (PathUtils.isLink(seed.getPath(), ent.getKey(), ref.getPath())) {
-						// TODO: Resolve refs? Must ensure I don't re-visit anyone
-						continue;
-					}
-					f2.include(ref.fetch().thenAccept(obj -> {
-						synchronized (nextLevel) {
-							nextLevel.add(obj);
+			fence.include(seed.fetchAttributes().thenAccept(attributes -> {
+				synchronized (nextLevel) {
+					for (Map.Entry<String, ?> ent : attributes.entrySet()) {
+						Object val = ent.getValue();
+						if (!(val instanceof TargetObject)) {
+							continue;
 						}
-					}));
+						TargetObject obj = (TargetObject) val;
+						if (PathUtils.isLink(seed.getPath(), ent.getKey(), obj.getPath())) {
+							// TODO: Resolve links? Must ensure I don't re-visit anyone
+							continue;
+						}
+						nextLevel.add(obj);
+					}
 				}
-				return f2.ready();
 			}));
 		}
 		return fence.ready().thenCompose(__ -> findInAggregate(iface, nextLevel));
@@ -299,7 +261,7 @@ public enum DebugModelConventions {
 					complete(finish(cur));
 					return;
 				case CONTINUE:
-					cur.fetchParent().thenAccept(this::next).exceptionally(this::exc);
+					next(cur.getParent());
 					return;
 				case TERMINATE:
 					complete(null);
@@ -376,8 +338,11 @@ public enum DebugModelConventions {
 	 * @param seed the starting point (root of subtree to inspect)
 	 * @param iface the class of the interface
 	 * @return the collection of successor elements supporting the interface
+	 * @deprecated use {@link TargetObjectSchema#searchFor(Class, boolean)} and
+	 *             {@link PathPredicates#collectSuccessorRefs(TargetObject)} instead.
 	 */
 	// TODO: Test this method
+	@Deprecated(forRemoval = true)
 	public static <T extends TargetObject> CompletableFuture<Collection<T>> collectSuccessors(
 			TargetObject seed, Class<T> iface) {
 		Collection<T> result =
@@ -385,47 +350,43 @@ public enum DebugModelConventions {
 		AsyncFence fence = new AsyncFence();
 		fence.include(seed.fetchElements().thenCompose(elements -> {
 			AsyncFence elemFence = new AsyncFence();
-			for (TargetObjectRef r : elements.values()) {
-				elemFence.include(r.fetch().thenCompose(e -> {
+			synchronized (result) {
+				for (TargetObject e : elements.values()) {
 					if (iface.isInstance(e)) {
-						synchronized (result) {
-							result.add(iface.cast(e));
-						}
-						return AsyncUtils.NIL;
+						result.add(iface.cast(e));
+						continue;
 					}
-					return collectSuccessors(e, iface).thenAccept(sub -> {
+					elemFence.include(collectSuccessors(e, iface).thenAccept(sub -> {
 						synchronized (result) {
 							result.addAll(sub);
 						}
-					});
-				}));
+					}));
+				}
 			}
 			return elemFence.ready();
 		}));
 		fence.include(seed.fetchAttributes().thenCompose(attributes -> {
 			AsyncFence attrFence = new AsyncFence();
-			for (Map.Entry<String, ?> ent : attributes.entrySet()) {
-				Object obj = ent.getValue();
-				if (!(obj instanceof TargetObjectRef)) {
-					continue;
-				}
-				TargetObjectRef r = (TargetObjectRef) obj;
-				if (PathUtils.isLink(seed.getPath(), ent.getKey(), r.getPath())) {
-					continue;
-				}
-				attrFence.include(r.fetch().thenCompose(a -> {
-					if (iface.isInstance(a)) {
-						synchronized (result) {
-							result.add(iface.cast(a));
-						}
-						return AsyncUtils.NIL;
+			synchronized (result) {
+				for (Map.Entry<String, ?> ent : attributes.entrySet()) {
+					Object val = ent.getValue();
+					if (!(val instanceof TargetObject)) {
+						continue;
 					}
-					return collectSuccessors(a, iface).thenAccept(sub -> {
+					TargetObject a = (TargetObject) val;
+					if (PathUtils.isLink(seed.getPath(), ent.getKey(), a.getPath())) {
+						continue;
+					}
+					if (iface.isInstance(a)) {
+						result.add(iface.cast(a));
+						continue;
+					}
+					attrFence.include(collectSuccessors(a, iface).thenAccept(sub -> {
 						synchronized (result) {
 							result.addAll(sub);
 						}
-					});
-				}));
+					}));
+				}
 			}
 			return attrFence.ready();
 		}));
@@ -440,8 +401,8 @@ public enum DebugModelConventions {
 	 * @param successor the seed object
 	 * @return a future which completes with the found thread or completes with {@code null}.
 	 */
-	public static CompletableFuture<TargetThread<?>> findThread(TargetObject successor) {
-		return new AncestorTraversal<TargetThread<?>>(successor) {
+	public static CompletableFuture<TargetThread> findThread(TargetObject successor) {
+		return new AncestorTraversal<TargetThread>(successor) {
 			@Override
 			protected Result check(TargetObject obj) {
 				if (obj.isRoot()) {
@@ -454,51 +415,59 @@ public enum DebugModelConventions {
 			}
 
 			@Override
-			protected TargetThread<?> finish(TargetObject obj) {
-				return (TargetThread<?>) obj;
+			protected TargetThread finish(TargetObject obj) {
+				return (TargetThread) obj;
 			}
 		}.start();
 	}
 
 	/**
-	 * Find the nearest ancestor thread
+	 * Check if the given process is alive
 	 * 
-	 * @see #findThread(TargetObject)
+	 * @param process the process
+	 * @return true if alive
 	 */
-	public static CompletableFuture<TargetThread<?>> findThread(TargetObjectRef successorRef) {
-		return successorRef.fetch().thenCompose(DebugModelConventions::findThread);
+	public static boolean isProcessAlive(TargetProcess process) {
+		if (!process.isValid()) {
+			return false;
+		}
+		if (!(process instanceof TargetExecutionStateful)) {
+			return true;
+		}
+		TargetExecutionStateful exe = (TargetExecutionStateful) process;
+		TargetExecutionState state = exe.getExecutionState();
+		if (state == null) {
+			Msg.error(null, "null state for " + exe);
+			return false;
+		}
+		return state.isAlive();
 	}
 
 	/**
-	 * Check if a target is a live process
+	 * Check if a target is a live process, and cast if so
 	 * 
 	 * @param target the potential process
 	 * @return the process if live, or null
 	 */
-	public static TargetProcess<?> liveProcessOrNull(TargetObject target) {
-		if (!(target instanceof TargetProcess<?>)) {
+	public static TargetProcess liveProcessOrNull(TargetObject target) {
+		if (!(target instanceof TargetProcess)) {
 			return null;
 		}
-		// TODO: When schemas are introduced, we'll better handle "associated"
-		// For now, require "implements"
-		if (!(target instanceof TargetExecutionStateful<?>)) {
-			return (TargetProcess<?>) target;
-		}
-		TargetExecutionStateful<?> exe = (TargetExecutionStateful<?>) target;
-		TargetExecutionState state = exe.getExecutionState();
-		if (!state.isAlive()) {
-			return null;
-		}
-		return (TargetProcess<?>) target;
+		TargetProcess process = (TargetProcess) target;
+		return isProcessAlive(process) ? process : null;
 	}
 
 	/**
 	 * A convenience for listening to selected portions (possible all) of a sub-tree of a model
 	 */
-	public abstract static class SubTreeListenerAdapter implements TargetObjectListener {
+	public abstract static class SubTreeListenerAdapter extends AnnotatedDebuggerAttributeListener {
 		protected boolean disposed = false;
 		protected final NavigableMap<List<String>, TargetObject> objects =
 			new TreeMap<>(PathComparator.KEYED);
+
+		public SubTreeListenerAdapter() {
+			super(MethodHandles.lookup());
+		}
 
 		/**
 		 * An object has been removed from the sub-tree
@@ -517,13 +486,13 @@ public enum DebugModelConventions {
 		/**
 		 * Decide whether a sub-tree (of the sub-tree) should be tracked
 		 * 
-		 * @param ref the root of the sub-tree to consider
+		 * @param obj the root of the sub-tree to consider
 		 * @return false to ignore, true to track
 		 */
-		protected abstract boolean checkDescend(TargetObjectRef ref);
+		protected abstract boolean checkDescend(TargetObject obj);
 
 		@Override
-		public void invalidated(TargetObject object, String reason) {
+		public void invalidated(TargetObject object, TargetObject branch, String reason) {
 			runNotInSwing(this, () -> doInvalidated(object, reason), "invalidated");
 		}
 
@@ -572,20 +541,19 @@ public enum DebugModelConventions {
 			}
 		}
 
-		private void considerRef(TargetObjectRef ref) {
-			if (!checkDescend(ref)) {
+		private void considerObj(TargetObject obj) {
+			if (!checkDescend(obj)) {
 				return;
 			}
-			ref.fetch()
-					.thenAcceptAsync(this::addListenerAndConsiderSuccessors)
+			CompletableFuture.runAsync(() -> addListenerAndConsiderSuccessors(obj))
 					.exceptionally(ex -> {
-						Msg.error(this, "Could not fetch a ref: " + ref, ex);
+						Msg.error(this, "Could add to object: " + obj, ex);
 						return null;
 					});
 		}
 
 		private void considerElements(TargetObject parent,
-				Map<String, ? extends TargetObjectRef> elements) {
+				Map<String, ? extends TargetObject> elements) {
 			synchronized (objects) {
 				if (disposed) {
 					return;
@@ -594,12 +562,12 @@ public enum DebugModelConventions {
 					return;
 				}
 			}
-			for (TargetObjectRef e : elements.values()) {
-				considerRef(e);
+			for (TargetObject e : elements.values()) {
+				considerObj(e);
 			}
 		}
 
-		private void considerAttributes(TargetObject obj, Map<String, ?> attributes) {
+		protected void considerAttributes(TargetObject obj, Map<String, ?> attributes) {
 			synchronized (objects) {
 				if (disposed) {
 					return;
@@ -610,15 +578,15 @@ public enum DebugModelConventions {
 			}
 			for (Map.Entry<String, ?> ent : attributes.entrySet()) {
 				String name = ent.getKey();
-				Object a = ent.getValue();
-				if (!(a instanceof TargetObjectRef)) {
+				Object val = ent.getValue();
+				if (!(val instanceof TargetObject)) {
 					continue;
 				}
-				TargetObjectRef r = (TargetObjectRef) a;
-				if (PathUtils.isLink(obj.getPath(), name, r.getPath())) {
+				TargetObject a = (TargetObject) val;
+				if (PathUtils.isLink(obj.getPath(), name, a.getPath())) {
 					continue;
 				}
-				considerRef(r);
+				considerObj(a);
 			}
 		}
 
@@ -673,12 +641,12 @@ public enum DebugModelConventions {
 
 		@Override
 		public void elementsChanged(TargetObject parent, Collection<String> removed,
-				Map<String, ? extends TargetObjectRef> added) {
+				Map<String, ? extends TargetObject> added) {
 			runNotInSwing(this, () -> doElementsChanged(parent, removed, added), "elementsChanged");
 		}
 
 		private void doElementsChanged(TargetObject parent, Collection<String> removed,
-				Map<String, ? extends TargetObjectRef> added) {
+				Map<String, ? extends TargetObject> added) {
 			if (checkDescend(parent)) {
 				considerElements(parent, added);
 			}
@@ -717,23 +685,31 @@ public enum DebugModelConventions {
 		}
 	}
 
-	public static class AllRequiredAccess extends AsyncReference<TargetAccessibility, Void> {
-		protected class ListenerForAccess implements TargetAccessibilityListener {
-			protected final TargetAccessConditioned<?> access;
+	/**
+	 * A variable that is updated whenever access changes according to the (now deprecated)
+	 * "every-ancestor" convention.
+	 * 
+	 * @deprecated The "every-ancestor" thing doesn't add any flexibility to model implementations.
+	 *             It might even restrict it. Not to mention it's obtuse to implement.
+	 */
+	@Deprecated(forRemoval = true)
+	public static class AllRequiredAccess extends AsyncReference<Boolean, Void> {
+		protected class ListenerForAccess extends AnnotatedDebuggerAttributeListener {
+			protected final TargetAccessConditioned access;
 			private boolean accessible;
 
-			public ListenerForAccess(TargetAccessConditioned<?> access) {
+			public ListenerForAccess(TargetAccessConditioned access) {
+				super(MethodHandles.lookup());
 				this.access = access;
 				this.access.addListener(this);
-				this.accessible = access.getAccessibility() == TargetAccessibility.ACCESSIBLE;
+				this.accessible = access.isAccessible();
 			}
 
-			@Override
-			public void accessibilityChanged(TargetAccessConditioned<?> object,
-					TargetAccessibility accessibility) {
+			@AttributeCallback(TargetAccessConditioned.ACCESSIBLE_ATTRIBUTE_NAME)
+			public void accessibilityChanged(TargetObject object, boolean accessibility) {
 				//Msg.debug(this, "Obj " + object + " has become " + accessibility);
 				synchronized (AllRequiredAccess.this) {
-					this.accessible = accessibility == TargetAccessibility.ACCESSIBLE;
+					this.accessible = accessibility;
 					// Check that all requests have been issued (fence is ready)
 					if (listeners != null) {
 						set(getAllAccessibility(), null);
@@ -745,14 +721,67 @@ public enum DebugModelConventions {
 		protected final List<ListenerForAccess> listeners;
 		protected final AsyncFence initFence = new AsyncFence();
 
-		public AllRequiredAccess(Collection<? extends TargetAccessConditioned<?>> allReq) {
+		public AllRequiredAccess(Collection<? extends TargetAccessConditioned> allReq) {
 			Msg.debug(this, "Listening for access on: " + allReq);
 			listeners = allReq.stream().map(ListenerForAccess::new).collect(Collectors.toList());
 			set(getAllAccessibility(), null);
 		}
 
-		public TargetAccessibility getAllAccessibility() {
-			return TargetAccessibility.fromBool(listeners.stream().allMatch(l -> l.accessible));
+		public boolean getAllAccessibility() {
+			return listeners.stream().allMatch(l -> l.accessible);
+		}
+	}
+
+	public static class AsyncAttribute<T> extends AsyncReference<T, Void>
+			implements DebuggerModelListener {
+		private final TargetObject obj;
+		private final String name;
+
+		@SuppressWarnings("unchecked")
+		public AsyncAttribute(TargetObject obj, String name) {
+			this.name = name;
+			this.obj = obj;
+			obj.addListener(this);
+			obj.fetchAttribute(name).thenAccept(t -> {
+				set((T) t, null);
+			}).exceptionally(ex -> {
+				Msg.error(this, "Could not get initial value of " + name + " for " + obj, ex);
+				return null;
+			});
+		}
+
+		@Override
+		@SuppressWarnings("unchecked")
+		public void attributesChanged(TargetObject parent, Collection<String> removed,
+				Map<String, ?> added) {
+			if (added.containsKey(name)) {
+				set((T) added.get(name), null);
+			}
+			else if (removed.contains(name)) {
+				set(null, null);
+			}
+		}
+
+		public void dispose() {
+			this.dispose(new AssertionError("disposed"));
+		}
+
+		@Override
+		public void dispose(Throwable reason) {
+			super.dispose(reason);
+			obj.removeListener(this);
+		}
+	}
+
+	public static class AsyncState extends AsyncAttribute<TargetExecutionState> {
+		public AsyncState(TargetExecutionStateful stateful) {
+			super(stateful, TargetExecutionStateful.STATE_ATTRIBUTE_NAME);
+		}
+	}
+
+	public static class AsyncAccess extends AsyncAttribute<Boolean> {
+		public AsyncAccess(TargetAccessConditioned ac) {
+			super(ac, TargetAccessConditioned.ACCESSIBLE_ATTRIBUTE_NAME);
 		}
 	}
 
@@ -774,11 +803,34 @@ public enum DebugModelConventions {
 	 * @param obj the object whose accessibility to track
 	 * @return a future which completes with an {@link AsyncReference} of the objects effective
 	 *         accessibility.
+	 * @deprecated Just listen on the nearest {@link TargetAccessConditioned} ancestor instead. The
+	 *             "every-ancestor" convention is deprecated.
 	 */
+	@Deprecated
 	public static CompletableFuture<AllRequiredAccess> trackAccessibility(TargetObject obj) {
-		CompletableFuture<? extends Collection<? extends TargetAccessConditioned<?>>> collectAncestors =
-			collectAncestors(obj, TargetAccessConditioned.tclass);
+		CompletableFuture<? extends Collection<? extends TargetAccessConditioned>> collectAncestors =
+			collectAncestors(obj, TargetAccessConditioned.class);
 		return collectAncestors.thenApply(AllRequiredAccess::new);
+	}
+
+	/**
+	 * Request activation of the given object in its nearest active scope
+	 * 
+	 * <p>
+	 * Note if the object has no suitable active scope, this method fails silently.
+	 * 
+	 * @param obj the object on which to request activation
+	 * @return a future which completes when activation is granted, or exceptionally
+	 */
+	public static CompletableFuture<Void> requestActivation(TargetObject obj) {
+		CompletableFuture<? extends TargetActiveScope> futureActivator =
+			DebugModelConventions.findSuitable(TargetActiveScope.class, obj);
+		return futureActivator.thenCompose(activator -> {
+			if (activator == null) {
+				return AsyncUtils.NIL;
+			}
+			return activator.requestActivation(obj);
+		});
 	}
 
 	/**
@@ -790,9 +842,9 @@ public enum DebugModelConventions {
 	 * @param obj the object on which to request focus
 	 * @return a future which completes when focus is granted, or exceptionally
 	 */
-	public static CompletableFuture<Void> requestFocus(TargetObjectRef obj) {
-		CompletableFuture<? extends TargetFocusScope<?>> futureScope =
-			DebugModelConventions.findSuitable(TargetFocusScope.tclass, obj);
+	public static CompletableFuture<Void> requestFocus(TargetObject obj) {
+		CompletableFuture<? extends TargetFocusScope> futureScope =
+			DebugModelConventions.findSuitable(TargetFocusScope.class, obj);
 		return futureScope.thenCompose(scope -> {
 			if (scope == null) {
 				return AsyncUtils.NIL;

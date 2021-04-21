@@ -26,23 +26,19 @@ import org.junit.Test;
 
 import ghidra.app.plugin.core.debug.DebuggerCoordinates;
 import ghidra.app.plugin.core.debug.gui.AbstractGhidraHeadedDebuggerGUITest;
-import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceTest;
 import ghidra.app.services.TraceRecorder;
 import ghidra.dbg.model.TestTargetStack;
 import ghidra.dbg.model.TestTargetStackFrameHasRegisterBank;
 import ghidra.framework.model.DomainFile;
 import ghidra.trace.database.thread.DBTraceThread;
 import ghidra.trace.model.Trace;
+import ghidra.trace.model.thread.TraceThread;
 import ghidra.util.SystemUtilities;
 import ghidra.util.database.UndoableTransaction;
 
 public class DebuggerTraceManagerServiceTest extends AbstractGhidraHeadedDebuggerGUITest {
 	protected static final long TIMEOUT_MILLIS =
 		SystemUtilities.isInTestingBatchMode() ? 5000 : Long.MAX_VALUE;
-
-	static {
-		DebuggerModelServiceTest.addTestModelPathPatterns();
-	}
 
 	@Test
 	public void testGetOpenTraces() throws Exception {
@@ -307,30 +303,30 @@ public class DebuggerTraceManagerServiceTest extends AbstractGhidraHeadedDebugge
 		traceManager.activateTrace(trace);
 		waitForSwing();
 
-		assertEquals(0, recorder.getSnap());
-		assertEquals(0, traceManager.getCurrentSnap());
+		long initSnap = recorder.getSnap();
+		assertEquals(initSnap, traceManager.getCurrentSnap());
 
 		recorder.forceSnapshot();
 		waitForSwing();
 
-		assertEquals(1, recorder.getSnap());
-		assertEquals(1, traceManager.getCurrentSnap());
+		assertEquals(initSnap + 1, recorder.getSnap());
+		assertEquals(initSnap + 1, traceManager.getCurrentSnap());
 
 		traceManager.setAutoActivatePresent(false);
 
 		recorder.forceSnapshot();
 		waitForSwing();
 
-		assertEquals(2, recorder.getSnap());
-		assertEquals(1, traceManager.getCurrentSnap());
+		assertEquals(initSnap + 2, recorder.getSnap());
+		assertEquals(initSnap + 1, traceManager.getCurrentSnap());
 
 		traceManager.setAutoActivatePresent(true);
 
 		recorder.forceSnapshot();
 		waitForSwing();
 
-		assertEquals(3, recorder.getSnap());
-		assertEquals(3, traceManager.getCurrentSnap());
+		assertEquals(initSnap + 3, recorder.getSnap());
+		assertEquals(initSnap + 3, traceManager.getCurrentSnap());
 	}
 
 	@Test
@@ -344,6 +340,8 @@ public class DebuggerTraceManagerServiceTest extends AbstractGhidraHeadedDebugge
 			new TestDebuggerTargetTraceMapper(mb.testProcess1));
 		Trace trace = recorder.getTrace();
 
+		waitForValue(() -> modelService.getTarget(trace));
+
 		traceManager.openTrace(trace);
 		waitForSwing();
 
@@ -356,16 +354,22 @@ public class DebuggerTraceManagerServiceTest extends AbstractGhidraHeadedDebugge
 		assertNull(traceManager.getCurrentThread());
 		assertEquals(mb.testProcess1, mb.testModel.session.getFocus());
 
-		traceManager.activateThread(recorder.getTraceThread(mb.testThread1));
+		TraceThread thread = waitForValue(() -> recorder.getTraceThread(mb.testThread1));
+		traceManager.activateThread(thread);
 		waitForSwing();
 
 		assertEquals(mb.testThread1, mb.testModel.session.getFocus());
 
 		TestTargetStack stack = mb.testThread1.addStack();
 		// Note, push simply moves the data, the new frame still has the higher index
-		TestTargetStackFrameHasRegisterBank frame0 = stack.pushFrameHasBank();
-		TestTargetStackFrameHasRegisterBank frame1 = stack.pushFrameHasBank();
+		TestTargetStackFrameHasRegisterBank frame0 = stack.pushFrameHasBank(mb.addr(0x00400000));
+		TestTargetStackFrameHasRegisterBank frame1 = stack.pushFrameHasBank(mb.addr(0x00400100));
 		waitForDomainObject(trace);
+		// Eww. I'm starting to think this could be cheating, considering focus sync at launch
+		waitForValue(() -> recorder.getTraceStackFrame(frame0));
+		waitForValue(() -> recorder.getTraceStackFrame(frame1));
+		waitForValue(() -> recorder.getTargetStackFrame(thread, 0));
+		waitForValue(() -> recorder.getTargetStackFrame(thread, 1));
 
 		// Starting with 0 results in no change in coordinates, so ignored
 		traceManager.activateFrame(1);
@@ -418,8 +422,8 @@ public class DebuggerTraceManagerServiceTest extends AbstractGhidraHeadedDebugge
 
 		TestTargetStack stack = mb.testThread1.addStack();
 		// Note, push simply moves the data, the new frame still has the higher index
-		TestTargetStackFrameHasRegisterBank frame0 = stack.pushFrameHasBank();
-		TestTargetStackFrameHasRegisterBank frame1 = stack.pushFrameHasBank();
+		TestTargetStackFrameHasRegisterBank frame0 = stack.pushFrameHasBank(mb.addr(0x00400000));
+		TestTargetStackFrameHasRegisterBank frame1 = stack.pushFrameHasBank(mb.addr(0x00400100));
 		waitForDomainObject(trace);
 
 		// Starting with 0 results in no change in coordinates, so ignored

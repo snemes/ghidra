@@ -23,7 +23,7 @@ import ghidra.dbg.target.TargetLauncher;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
 
 public interface DbgModelTargetConnector
-		extends DbgModelSelectableObject, TargetLauncher<DbgModelTargetConnector> {
+		extends DbgModelSelectableObject, TargetLauncher {
 
 	@Override
 	public default String getDisplay() {
@@ -31,7 +31,7 @@ public interface DbgModelTargetConnector
 	}
 
 	@Override
-	public CompletableFuture<Void> select();
+	public CompletableFuture<Void> setActive();
 
 	@Override
 	public TargetParameterMap getParameters();

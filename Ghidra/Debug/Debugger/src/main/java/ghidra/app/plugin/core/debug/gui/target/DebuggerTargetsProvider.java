@@ -106,6 +106,7 @@ public class DebuggerTargetsProvider extends ComponentProviderAdapter {
 
 		@Override
 		public void actionPerformed(ActionContext context) {
+			connectDialog.reset();
 			tool.showDialog(connectDialog);
 		}
 
@@ -226,13 +227,16 @@ public class DebuggerTargetsProvider extends ComponentProviderAdapter {
 		return mainPanel;
 	}
 
-	private void setContextAndEmitEvents() {
+	private void setContext() {
 		myActionContext = new DebuggerModelActionContext(this, tree.getSelectionPath(), tree);
+		contextChanged();
+	}
+
+	private void emitEvents() {
 		DebuggerObjectModel model = myActionContext.getIfDebuggerModel();
 		if (model != null) {
 			modelService.activateModel(model);
 		}
-		contextChanged();
 	}
 
 	private void buildMainPanel() {
@@ -244,14 +248,16 @@ public class DebuggerTargetsProvider extends ComponentProviderAdapter {
 		tree.getSelectionModel().setSelectionMode(TreeSelectionModel.SINGLE_TREE_SELECTION);
 		mainPanel.add(tree);
 
+		// NB: for both of these, setContext should precede emitEvents
 		tree.getGTSelectionModel().addGTreeSelectionListener(evt -> {
-			if (evt.getEventOrigin() == EventOrigin.API_GENERATED) {
-				return;
+			setContext();
+			if (evt.getEventOrigin() != EventOrigin.API_GENERATED) {
+				emitEvents();
 			}
-			setContextAndEmitEvents();
 		});
 		tree.addGTModelListener((AnyChangeTreeModelListener) e -> {
-			setContextAndEmitEvents();
+			setContext();
+			emitEvents();
 		});
 	}
 
@@ -290,7 +296,7 @@ public class DebuggerTargetsProvider extends ComponentProviderAdapter {
 			// TODO: Ensure when tree is populated, correct model is selected
 		}
 		// Note, setSelectedNode does not take EventOrigin
-		tree.setSelectionPaths(new TreePath[] { node.getTreePath() }, EventOrigin.USER_GENERATED);
+		tree.setSelectionPaths(new TreePath[] { node.getTreePath() }, EventOrigin.API_GENERATED);
 	}
 
 	protected void clearServiceCaches(DebuggerModelService service) {

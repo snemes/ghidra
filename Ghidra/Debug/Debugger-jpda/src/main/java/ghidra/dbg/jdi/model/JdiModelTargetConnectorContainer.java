@@ -27,11 +27,15 @@ import ghidra.async.AsyncUtils;
 import ghidra.dbg.target.schema.*;
 import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "ConnectorContainer", elements = { //
-	@TargetElementType(type = JdiModelTargetConnector.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "ConnectorContainer",
+	elements = {
+		@TargetElementType(type = JdiModelTargetConnector.class)
+	},
+	attributes = {
+		@TargetAttributeType(type = Void.class)
+	},
+	canonicalContainer = true)
 public class JdiModelTargetConnectorContainer extends JdiModelTargetObjectImpl {
 
 	protected final JdiModelTargetRoot root;
@@ -91,7 +95,7 @@ public class JdiModelTargetConnectorContainer extends JdiModelTargetObjectImpl {
 		return null;
 	}
 
-	public CompletableFuture<?> refresh() {
+	public CompletableFuture<?> refreshInternal() {
 		if (!isObserved()) {
 			return AsyncUtils.NIL;
 		}

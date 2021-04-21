@@ -124,8 +124,8 @@ public class DbgStackFrameImpl implements DbgStackFrame {
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
-		return manager.execute(new DbgThreadSelectCommand(manager, thread, level));
+	public CompletableFuture<Void> setActive() {
+		return thread.setActive();
 	}
 
 	@Override

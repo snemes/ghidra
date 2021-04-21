@@ -43,8 +43,8 @@ public class DbgListModulesCommand extends AbstractDbgCommand<Map<String, DbgMod
 			}
 			// Need to create the thread as if we receive =thread-created
 			Msg.warn(this, "Resync: Was missing module: " + id);
-			DbgModuleImpl module = new DbgModuleImpl(manager, process, id);
-			module.setInfo(moduleInfo.get(updatedModules.get(id)));
+			DebugModuleInfo info = moduleInfo.get(updatedModules.get(id));
+			DbgModuleImpl module = new DbgModuleImpl(manager, process, info);
 			module.add();
 		}
 		for (String id : new ArrayList<>(cur)) {
@@ -63,7 +63,11 @@ public class DbgListModulesCommand extends AbstractDbgCommand<Map<String, DbgMod
 		DebugSymbols symbols = manager.getSymbols();
 		for (DebugModule module : symbols.iterateModules(0)) {
 			DebugModuleInfo info = symbols.getModuleParameters(1, module.getIndex());
-			updatedModules.put(module.getName(DebugModuleName.MODULE), module);
+			String imageName = module.getName(DebugModuleName.IMAGE);
+			String moduleName = module.getName(DebugModuleName.MODULE);
+			info.setImageName(imageName);
+			info.setModuleName(moduleName);
+			updatedModules.put(info.toString(), module);
 			moduleInfo.put(module, info);
 		}
 	}

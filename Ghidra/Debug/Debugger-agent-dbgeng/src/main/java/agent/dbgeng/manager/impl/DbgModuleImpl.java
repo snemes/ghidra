@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 import agent.dbgeng.dbgeng.DebugModuleInfo;
 import agent.dbgeng.manager.DbgCause.Causes;
 import agent.dbgeng.manager.DbgModule;
+import agent.dbgeng.manager.cmd.DbgListSymbolsCommand;
 import ghidra.async.AsyncLazyValue;
 
 public class DbgModuleImpl implements DbgModule {
@@ -40,10 +41,11 @@ public class DbgModuleImpl implements DbgModule {
 	 * @param process the process to which the module belongs
 	 * @param id the dbgeng-assigned module ID
 	 */
-	public DbgModuleImpl(DbgManagerImpl manager, DbgProcessImpl process, String name) {
+	public DbgModuleImpl(DbgManagerImpl manager, DbgProcessImpl process, DebugModuleInfo info) {
 		this.manager = manager;
 		this.process = process;
-		this.name = name;
+		this.info = info;
+		this.name = info.getModuleName();
 	}
 
 	@Override
@@ -56,7 +58,7 @@ public class DbgModuleImpl implements DbgModule {
 	 */
 	public void add() {
 		process.addModule(this);
-		manager.getEventListeners().fire.moduleLoaded(process, name, Causes.UNCLAIMED);
+		manager.getEventListeners().fire.moduleLoaded(process, info, Causes.UNCLAIMED);
 	}
 
 	/**
@@ -64,12 +66,17 @@ public class DbgModuleImpl implements DbgModule {
 	 */
 	public void remove() {
 		process.removeModule(name);
-		manager.getEventListeners().fire.moduleUnloaded(process, name, Causes.UNCLAIMED);
+		manager.getEventListeners().fire.moduleUnloaded(process, info, Causes.UNCLAIMED);
 	}
 
 	@Override
 	public String getImageName() {
-		return info == null ? getName() : info.imageName;
+		return info == null ? getName() : info.getImageName();
+	}
+
+	@Override
+	public String getModuleName() {
+		return info == null ? getName() : info.getModuleName();
 	}
 
 	@Override
@@ -88,9 +95,7 @@ public class DbgModuleImpl implements DbgModule {
 	}
 
 	protected CompletableFuture<Map<String, DbgMinimalSymbol>> doGetMinimalSymbols() {
-		// TODO: Apparently, this is using internal GDB-debugging commands....
-		// TODO: Also make methods for "full" symbols (DWARF?)
-		return null;
+		return manager.execute(new DbgListSymbolsCommand(manager, process, this));
 	}
 
 	@Override
@@ -98,8 +103,8 @@ public class DbgModuleImpl implements DbgModule {
 		return minimalSymbols.request();
 	}
 
-	public void setInfo(DebugModuleInfo info) {
-		this.info = info;
+	public DebugModuleInfo getInfo() {
+		return info;
 	}
 
 }

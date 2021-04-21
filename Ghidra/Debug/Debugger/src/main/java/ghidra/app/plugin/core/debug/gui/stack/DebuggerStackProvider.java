@@ -41,13 +41,15 @@ import ghidra.program.model.address.Address;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.listing.Program;
-import ghidra.trace.model.Trace;
+import ghidra.trace.model.*;
+import ghidra.trace.model.Trace.TraceMemoryBytesChangeType;
 import ghidra.trace.model.Trace.TraceStackChangeType;
-import ghidra.trace.model.TraceDomainObjectListener;
 import ghidra.trace.model.memory.TraceMemoryRegisterSpace;
 import ghidra.trace.model.stack.TraceStack;
 import ghidra.trace.model.stack.TraceStackFrame;
 import ghidra.trace.model.thread.TraceThread;
+import ghidra.trace.util.TraceAddressSpace;
+import ghidra.trace.util.TraceRegisterUtils;
 import ghidra.util.Swing;
 import ghidra.util.table.GhidraTable;
 import ghidra.util.table.GhidraTableFilterPanel;
@@ -129,13 +131,12 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 		if (!Objects.equals(a.getThread(), b.getThread())) {
 			return false;
 		}
-		if (!Objects.equals(a.getSnap(), b.getSnap())) {
+		if (!Objects.equals(a.getTime(), b.getTime())) {
 			return false;
 		}
 		if (!Objects.equals(a.getFrame(), b.getFrame())) {
 			return false;
 		}
-		// TODO: Ticks
 		return true;
 	}
 
@@ -144,9 +145,14 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 			listenFor(TraceStackChangeType.ADDED, this::stackAdded);
 			listenFor(TraceStackChangeType.CHANGED, this::stackChanged);
 			listenFor(TraceStackChangeType.DELETED, this::stackDeleted);
+
+			listenFor(TraceMemoryBytesChangeType.CHANGED, this::bytesChanged);
 		}
 
 		private void stackAdded(TraceStack stack) {
+			if (stack.getSnap() != current.getViewSnap()) {
+				return;
+			}
 			TraceThread curThread = current.getThread();
 			if (curThread != stack.getThread()) {
 				return;
@@ -166,6 +172,35 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 				return;
 			}
 			loadStack();
+		}
+
+		// For updating a synthetic frame
+		private void bytesChanged(TraceAddressSpace space, TraceAddressSnapRange range) {
+			TraceThread curThread = current.getThread();
+			if (space.getThread() != curThread || space.getFrameLevel() != 0) {
+				return;
+			}
+			if (!current.getView().getViewport().containsAnyUpper(range.getLifespan())) {
+				return;
+			}
+			List<StackFrameRow> stackData = stackTableModel.getModelData();
+			if (stackData.isEmpty() || !(stackData.get(0) instanceof StackFrameRow.Synthetic)) {
+				return;
+			}
+			StackFrameRow.Synthetic frameRow = (StackFrameRow.Synthetic) stackData.get(0);
+			Trace trace = current.getTrace();
+			Register pc = trace.getBaseLanguage().getProgramCounter();
+			if (!TraceRegisterUtils.rangeForRegister(pc).intersects(range.getRange())) {
+				return;
+			}
+			TraceMemoryRegisterSpace regs =
+				trace.getMemoryManager().getMemoryRegisterSpace(curThread, false);
+			RegisterValue value = regs.getViewValue(current.getViewSnap(), pc);
+			Address address = trace.getBaseLanguage()
+					.getDefaultSpace()
+					.getAddress(value.getUnsignedValue().longValue());
+			frameRow.updateProgramCounter(address);
+			stackTableModel.fireTableDataChanged();
 		}
 	}
 
@@ -218,6 +253,7 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 
 		this.autoServiceWiring = AutoService.wireServicesConsumed(plugin, this);
 
+		setTitle(DebuggerResources.TITLE_PROVIDER_STACK);
 		setIcon(DebuggerResources.ICON_PROVIDER_STACK);
 		setHelpLocation(DebuggerResources.HELP_PROVIDER_STACK);
 		setWindowMenuGroup(DebuggerPluginPackage.NAME);
@@ -366,7 +402,7 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 			return;
 		}
 		Register pc = curTrace.getBaseLanguage().getProgramCounter();
-		RegisterValue value = regs.getValue(current.getSnap(), pc);
+		RegisterValue value = regs.getViewValue(current.getViewSnap(), pc);
 		if (value == null) {
 			contextChanged();
 			return;
@@ -374,7 +410,7 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 		Address address = curTrace.getBaseLanguage()
 				.getDefaultSpace()
 				.getAddress(value.getUnsignedValue().longValue());
-		stackTableModel.add(new StackFrameRow(this, address));
+		stackTableModel.add(new StackFrameRow.Synthetic(this, address));
 	}
 
 	protected void loadStack() {
@@ -383,8 +419,9 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 			doSetCurrentStack(null);
 			return;
 		}
+		// TODO: getLatestViewStack? Conventionally, I don't expect any scratch stacks, yet.
 		TraceStack stack =
-			current.getTrace().getStackManager().getLatestStack(curThread, current.getSnap());
+			current.getTrace().getStackManager().getLatestStack(curThread, current.getViewSnap());
 		if (stack == null) {
 			doSetSyntheticStack();
 		}
@@ -394,14 +431,13 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 		selectCurrentFrame();
 	}
 
-	protected String computeTitle() {
+	protected String computeSubTitle() {
 		TraceThread curThread = current.getThread();
-		String threadPart = curThread == null ? "" : (": " + curThread.getName());
-		return DebuggerResources.TITLE_PROVIDER_STACK + threadPart;
+		return curThread == null ? "" : curThread.getName();
 	}
 
-	protected void updateTitle() {
-		setTitle(computeTitle());
+	protected void updateSubTitle() {
+		setSubTitle(computeSubTitle());
 	}
 
 	private void removeOldListeners() {
@@ -437,7 +473,7 @@ public class DebuggerStackProvider extends ComponentProviderAdapter {
 		doSetTrace(current.getTrace());
 
 		loadStack();
-		updateTitle();
+		updateSubTitle();
 	}
 
 	protected void selectCurrentFrame() {

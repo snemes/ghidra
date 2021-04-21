@@ -23,8 +23,7 @@ import javax.swing.SwingUtilities;
 import ghidra.app.plugin.PluginCategoryNames;
 import ghidra.app.plugin.core.debug.AbstractDebuggerPlugin;
 import ghidra.app.plugin.core.debug.DebuggerPluginPackage;
-import ghidra.app.plugin.core.interpreter.InterpreterConsole;
-import ghidra.app.plugin.core.interpreter.InterpreterPanelService;
+import ghidra.app.plugin.core.interpreter.*;
 import ghidra.app.services.DebuggerInterpreterService;
 import ghidra.dbg.target.*;
 import ghidra.framework.plugintool.PluginInfo;
@@ -33,17 +32,17 @@ import ghidra.framework.plugintool.annotation.AutoServiceConsumed;
 import ghidra.framework.plugintool.util.PluginStatus;
 
 @PluginInfo( //
-		shortDescription = "Debugger interpreter panel service", //
-		description = "Manage interpreter panels within debug sessions", //
-		category = PluginCategoryNames.DEBUGGER, //
-		packageName = DebuggerPluginPackage.NAME, //
-		status = PluginStatus.RELEASED, //
-		servicesRequired = { //
-			InterpreterPanelService.class //
-		}, //
-		servicesProvided = {
-			DebuggerInterpreterService.class //
-		} //
+	shortDescription = "Debugger interpreter panel service", //
+	description = "Manage interpreter panels within debug sessions", //
+	category = PluginCategoryNames.DEBUGGER, //
+	packageName = DebuggerPluginPackage.NAME, //
+	status = PluginStatus.RELEASED, //
+	servicesRequired = { //
+		InterpreterPanelService.class //
+	}, //
+	servicesProvided = {
+		DebuggerInterpreterService.class //
+	} //
 )
 public class DebuggerInterpreterPlugin extends AbstractDebuggerPlugin
 		implements DebuggerInterpreterService {
@@ -58,7 +57,7 @@ public class DebuggerInterpreterPlugin extends AbstractDebuggerPlugin
 	}
 
 	@Override
-	public DebuggerInterpreterConnection showConsole(TargetConsole<?> targetConsole) {
+	public DebuggerInterpreterConnection showConsole(TargetConsole targetConsole) {
 		DebuggerInterpreterConnection conn;
 		synchronized (connections) {
 			conn = connections.computeIfAbsent(targetConsole, c -> createConnection(targetConsole));
@@ -68,7 +67,7 @@ public class DebuggerInterpreterPlugin extends AbstractDebuggerPlugin
 	}
 
 	@Override
-	public DebuggerInterpreterConnection showConsole(TargetInterpreter<?> targetInterpreter) {
+	public DebuggerInterpreterConnection showConsole(TargetInterpreter targetInterpreter) {
 		DebuggerInterpreterConnection conn;
 		synchronized (connections) {
 			conn = connections.computeIfAbsent(targetInterpreter,
@@ -94,12 +93,15 @@ public class DebuggerInterpreterPlugin extends AbstractDebuggerPlugin
 	}
 
 	protected void createConsole(AbstractDebuggerWrappedConsoleConnection<?> connection) {
-		InterpreterConsole console = consoleService.createInterpreterPanel(connection, true);
+		//InterpreterConsole console = consoleService.createInterpreterPanel(connection, true);
+		// TODO: Just fix the console plugin
+		InterpreterConsole console = new DebuggerInterpreterProvider(
+			(InterpreterPanelPlugin) consoleService, connection, true);
 		connection.setConsole(console);
 		connection.runInBackground();
 	}
 
-	protected DebuggerInterpreterConnection createConnection(TargetConsole<?> targetConsole) {
+	protected DebuggerInterpreterConnection createConnection(TargetConsole targetConsole) {
 		DebuggerWrappedConsoleConnection conn =
 			new DebuggerWrappedConsoleConnection(this, targetConsole);
 		createConsole(conn);
@@ -107,7 +109,7 @@ public class DebuggerInterpreterPlugin extends AbstractDebuggerPlugin
 	}
 
 	protected DebuggerInterpreterConnection createConnection(
-			TargetInterpreter<?> targetInterpreter) {
+			TargetInterpreter targetInterpreter) {
 		DebuggerWrappedInterpreterConnection conn =
 			new DebuggerWrappedInterpreterConnection(this, targetInterpreter);
 		createConsole(conn);

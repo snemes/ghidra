@@ -22,21 +22,23 @@ import java.util.stream.Collectors;
 
 import agent.gdb.manager.GdbModuleSection;
 import ghidra.dbg.agent.DefaultTargetObject;
+import ghidra.dbg.target.TargetObject;
+import ghidra.dbg.target.TargetSectionContainer;
 import ghidra.dbg.target.schema.TargetAttributeType;
 import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
-import ghidra.util.datastruct.WeakValueHashMap;
 
-@TargetObjectSchemaInfo(name = "SectionContainer", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "SectionContainer",
+	attributes = {
+		@TargetAttributeType(type = Void.class) },
+	canonicalContainer = true)
 public class GdbModelTargetSectionContainer
-		extends DefaultTargetObject<GdbModelTargetSection, GdbModelTargetModule> {
+		extends DefaultTargetObject<GdbModelTargetSection, GdbModelTargetModule>
+		implements TargetSectionContainer {
 	public static final String NAME = "Sections";
 
 	protected final GdbModelImpl impl;
 	protected final GdbModelTargetModule module;
-
-	protected final Map<String, GdbModelTargetSection> sectionsByName = new WeakValueHashMap<>();
 
 	public GdbModelTargetSectionContainer(GdbModelTargetModule module) {
 		super(module.impl, module, NAME, "SectionContainer");
@@ -54,9 +56,6 @@ public class GdbModelTargetSectionContainer
 					.collect(Collectors.toList());
 		}
 		setElements(sections, "Refreshed");
-		changeAttributes(List.of(), Map.of(
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
-		), "Refreshed");
 		parent.sectionsRefreshed(); // recompute base
 	}
 
@@ -67,14 +66,11 @@ public class GdbModelTargetSectionContainer
 		return module.module.listSections().thenAccept(this::updateUsingSections);
 	}
 
-	protected synchronized GdbModelTargetSection getTargetSection(String name) {
-		return sectionsByName.computeIfAbsent(name,
-			n -> new GdbModelTargetSection(this, module,
-				module.module.getKnownSections().get(name)));
-	}
-
 	protected synchronized GdbModelTargetSection getTargetSection(GdbModuleSection section) {
-		return sectionsByName.computeIfAbsent(section.getName(),
-			n -> new GdbModelTargetSection(this, module, section));
+		TargetObject modelObject = impl.getModelObject(section);
+		if (modelObject != null) {
+			return (GdbModelTargetSection) modelObject;
+		}
+		return new GdbModelTargetSection(this, module, section);
 	}
 }

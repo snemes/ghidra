@@ -19,11 +19,14 @@ import java.lang.reflect.Proxy;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
+import ghidra.dbg.DebuggerModelListener;
 import ghidra.dbg.DebuggerObjectModel;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.EnumerableTargetObjectSchema;
 import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.dbg.util.PathUtils;
+import ghidra.lifecycle.Internal;
+import ghidra.util.Msg;
 import ghidra.util.datastruct.ListenerSet;
 
 /**
@@ -38,16 +41,21 @@ import ghidra.util.datastruct.ListenerSet;
  * 
  * @param <P> the type of the parent
  */
-public abstract class AbstractTargetObject<P extends TargetObject>
-		implements TargetObject, InvalidatableTargetObjectIf {
+public abstract class AbstractTargetObject<P extends TargetObject> implements SpiTargetObject {
+	public static interface ProxyFactory<I> {
+		SpiTargetObject createProxy(AbstractTargetObject<?> delegate, I info);
+	}
+
+	protected static final ProxyFactory<Void> THIS_FACTORY = (d, i) -> d;
+
 	protected static final CompletableFuture<Map<String, TargetObject>> COMPLETED_EMPTY_ELEMENTS =
 		CompletableFuture.completedFuture(Map.of());
 	protected static final CompletableFuture<Map<String, Object>> COMPLETED_EMPTY_ATTRIBUTES =
 		CompletableFuture.completedFuture(Map.of());
 
-	protected final DebuggerObjectModel model;
+	protected final AbstractDebuggerObjectModel model;
+	protected final SpiTargetObject proxy;
 	protected final P parent;
-	protected final CompletableFuture<P> completedParent;
 	protected final List<String> path;
 	protected final int hash;
 	protected final String typeHint;
@@ -55,27 +63,44 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 
 	protected boolean valid = true;
 
-	protected final ListenerSet<TargetObjectListener> listeners =
-		new ListenerSet<>(TargetObjectListener.class);
+	// TODO: Remove these, and just do invocations on model's listeners?
+	protected final ListenerSet<DebuggerModelListener> listeners;
 
-	public AbstractTargetObject(DebuggerObjectModel model, P parent, String key, String typeHint,
+	public <I> AbstractTargetObject(ProxyFactory<I> proxyFactory, I proxyInfo,
+			AbstractDebuggerObjectModel model, P parent, String key, String typeHint,
 			TargetObjectSchema schema) {
+		this.listeners = new ListenerSet<>(DebuggerModelListener.class, model.clientExecutor);
 		this.model = model;
+		listeners.addChained(model.listeners);
 		this.parent = parent;
-		this.completedParent = CompletableFuture.completedFuture(parent);
 		if (parent == null) {
 			this.path = key == null ? List.of() : List.of(key);
 		}
 		else {
 			this.path = PathUtils.extend(parent.getPath(), key);
 		}
+
+		model.removeExisting(path);
+
 		this.hash = computeHashCode();
 		this.typeHint = typeHint;
 
 		this.schema = schema;
-		if (schema != null) {
-			schema.validateTypeAndInterfaces(getProxy(), null, enforcesStrictSchema());
-		}
+		this.proxy = proxyFactory.createProxy(this, proxyInfo);
+
+		fireCreated();
+	}
+
+	public AbstractTargetObject(AbstractDebuggerObjectModel model, P parent, String key,
+			String typeHint, TargetObjectSchema schema) {
+		this(THIS_FACTORY, null, model, parent, key, typeHint, schema);
+	}
+
+	protected void fireCreated() {
+		SpiTargetObject proxy = getProxy();
+		assert proxy != null;
+		model.objectCreated(proxy);
+		listeners.fire.created(proxy);
 	}
 
 	/**
@@ -85,14 +110,28 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 	 * Some implementations may use on a proxy-delegate pattern to implement target objects with
 	 * various combinations of supported interfaces. When this pattern is employed, the delegate
 	 * will extend {@link DefaultTargetObject}, causing {@code this} to refer to the delegate rather
-	 * than the proxy. When invoking listeners, the proxy given by this method is used instead. By
-	 * default, it simply returns {@code this}, providing the expected behavior for typical
-	 * implementations. The proxy is also used for schema interface validation.
+	 * than the proxy. When invoking listeners, the proxy given by this method is used instead. The
+	 * proxy is also used for schema interface validation.
 	 * 
 	 * @return the proxy or this
 	 */
-	public TargetObject getProxy() {
-		return this;
+	public SpiTargetObject getProxy() {
+		return proxy;
+	}
+
+	@Override
+	public P getParent() {
+		return parent;
+	}
+
+	@Override
+	public <T extends TargetObject> T as(Class<T> iface) {
+		return DebuggerObjectModel.requireIface(iface, getProxy(), path);
+	}
+
+	@Override
+	public Collection<String> getInterfaceNames() {
+		return Protected.getInterfaceNamesOf(getProxy().getClass());
 	}
 
 	/**
@@ -106,12 +145,13 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 	 * there is no guarantee of consistency after an exception is thrown. In general, models without
 	 * explicit schemas should not fail validation, since objects will likely be assigned
 	 * {@link EnumerableTargetObjectSchema#ANY}. When developing a schema for an existing model, it
-	 * may be useful to override this to return false in the interim.
+	 * may be useful to override this to return true to fail fast.
 	 * 
 	 * @return true to throw exceptions on schema violations.
 	 */
-	protected boolean enforcesStrictSchema() {
-		return true;
+	@Override
+	public boolean enforcesStrictSchema() {
+		return false;
 	}
 
 	@Override
@@ -126,12 +166,12 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 
 	@Override
 	public String toString() {
-		if (schema == null) {
-			return String.format("<%s: path=%s model=%s schema=NULL>", getClass().getSimpleName(),
-				path, getModel());
-		}
-		return String.format("<%s: path=%s model=%s schema=%s>", getClass().getSimpleName(), path,
-			getModel(), schema.getName());
+		//if (schema == null) {
+		//	return String.format("<%s: path=%s model=%s schema=<null>>", getClass().getSimpleName(),
+		//		getJoinedPath("."), getModel());
+		//}
+		return String.format("<%s: path=%s model=%s schema=%s>", getClass().getSimpleName(),
+			getJoinedPath("."), getModel(), schema.getName());
 	}
 
 	@Override
@@ -150,17 +190,20 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 	}
 
 	@Override
-	public void addListener(TargetObjectListener l) {
+	public void addListener(DebuggerModelListener l) {
+		if (!valid) {
+			throw new IllegalStateException("Object is no longer valid: " + getProxy());
+		}
 		listeners.add(l);
 	}
 
 	@Override
-	public void removeListener(TargetObjectListener l) {
+	public void removeListener(DebuggerModelListener l) {
 		listeners.remove(l);
 	}
 
 	@Override
-	public DebuggerObjectModel getModel() {
+	public AbstractDebuggerObjectModel getModel() {
 		return model;
 	}
 
@@ -199,32 +242,44 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 		return path;
 	}
 
-	@Override
-	public CompletableFuture<? extends P> fetchParent() {
-		return completedParent;
-	}
-
-	/**
-	 * Get the parent immediately
-	 * 
-	 * Since the parent is fixed and known to the implementation, it can be retrieved immediately.
-	 * 
-	 * @return the parent
-	 */
-	public P getImplParent() {
-		return parent;
-	}
-
-	protected void doInvalidate(String reason) {
+	protected void doInvalidate(TargetObject branch, String reason) {
+		if (!valid) {
+			return;
+		}
 		valid = false;
-		listeners.fire.invalidated(this, reason);
+		model.objectInvalidated(getProxy());
+		listeners.fire.invalidated(getProxy(), branch, reason);
+		CompletableFuture.runAsync(() -> {
+			listeners.clear();
+			listeners.clearChained();
+		}, model.clientExecutor).exceptionally(ex -> {
+			Msg.error(this, "Error emptying invalidated object's listener set: ", ex);
+			return null;
+		});
 	}
 
-	protected void doInvalidateElements(Collection<?> elems, String reason) {
-		for (Object e : elems) {
+	protected void doInvalidateElements(Map<String, ?> elems, String reason) {
+		for (Map.Entry<String, ?> ent : elems.entrySet()) {
+			String name = ent.getKey();
+			Object e = ent.getValue();
+			if (e instanceof InvalidatableTargetObjectIf && e instanceof TargetObject) {
+				InvalidatableTargetObjectIf obj = (InvalidatableTargetObjectIf) e;
+				if (!PathUtils.isElementLink(getPath(), name, obj.getPath())) {
+					obj.doInvalidateSubtree((TargetObject) e, reason);
+				}
+			}
+		}
+	}
+
+	protected void doInvalidateElements(TargetObject branch, Map<String, ?> elems, String reason) {
+		for (Map.Entry<String, ?> ent : elems.entrySet()) {
+			String name = ent.getKey();
+			Object e = ent.getValue();
 			if (e instanceof InvalidatableTargetObjectIf) {
 				InvalidatableTargetObjectIf obj = (InvalidatableTargetObjectIf) e;
-				obj.invalidateSubtree(reason);
+				if (!PathUtils.isElementLink(getPath(), name, obj.getPath())) {
+					obj.doInvalidateSubtree(branch, reason);
+				}
 			}
 		}
 	}
@@ -233,20 +288,57 @@ public abstract class AbstractTargetObject<P extends TargetObject>
 		for (Map.Entry<String, ?> ent : attrs.entrySet()) {
 			String name = ent.getKey();
 			Object a = ent.getValue();
+			if (a instanceof InvalidatableTargetObjectIf && a instanceof TargetObject) {
+				InvalidatableTargetObjectIf obj = (InvalidatableTargetObjectIf) a;
+				if (!PathUtils.isLink(getPath(), name, obj.getPath())) {
+					obj.doInvalidateSubtree((TargetObject) a, reason);
+				}
+			}
+		}
+	}
+
+	protected void doInvalidateAttributes(TargetObject branch, Map<String, ?> attrs,
+			String reason) {
+		for (Map.Entry<String, ?> ent : attrs.entrySet()) {
+			String name = ent.getKey();
+			Object a = ent.getValue();
 			if (a instanceof InvalidatableTargetObjectIf) {
 				InvalidatableTargetObjectIf obj = (InvalidatableTargetObjectIf) a;
 				if (!PathUtils.isLink(getPath(), name, obj.getPath())) {
-					obj.invalidateSubtree(reason);
+					obj.doInvalidateSubtree(branch, reason);
 				}
 			}
 		}
 	}
 
 	@Override
-	public void invalidateSubtree(String reason) {
+	public void doInvalidateSubtree(TargetObject branch, String reason) {
 		// Pre-ordered traversal
-		doInvalidate(reason);
-		doInvalidateElements(getCachedElements().values(), reason);
-		doInvalidateAttributes(getCachedAttributes(), reason);
+		doInvalidate(branch, reason);
+		doInvalidateElements(branch, getCachedElements(), reason);
+		doInvalidateAttributes(branch, getCachedAttributes(), reason);
+	}
+
+	@Override
+	public void invalidateSubtree(TargetObject branch, String reason) {
+		synchronized (model.lock) {
+			doInvalidateSubtree(branch, reason);
+		}
+	}
+
+	/**
+	 * Get the listener set
+	 * 
+	 * <p>
+	 * TODO: This method should only be used by the internal implementation. It's not exposed on the
+	 * {@link TargetObject} interface, but it could be dangerous to have it here, since clients
+	 * could cast to {@link AbstractTargetObject} and get at it, even if the implementation's jar is
+	 * excluded from the compile-time classpath.
+	 * 
+	 * @return the listener set
+	 */
+	@Internal
+	public ListenerSet<DebuggerModelListener> getListeners() {
+		return listeners;
 	}
 }

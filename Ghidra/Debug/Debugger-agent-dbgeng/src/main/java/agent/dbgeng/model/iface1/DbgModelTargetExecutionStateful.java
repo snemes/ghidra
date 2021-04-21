@@ -29,8 +29,8 @@ import ghidra.dbg.target.TargetExecutionStateful;
  * 
  * @param <T> type for this
  */
-public interface DbgModelTargetExecutionStateful<T extends TargetExecutionStateful<T>>
-		extends DbgModelTargetObject, TargetExecutionStateful<T> {
+public interface DbgModelTargetExecutionStateful
+		extends DbgModelTargetObject, TargetExecutionStateful {
 
 	public default TargetExecutionState convertState(DbgState state) {
 		switch (state) {
@@ -46,7 +46,6 @@ public interface DbgModelTargetExecutionStateful<T extends TargetExecutionStatef
 		changeAttributes(List.of(), Map.of( //
 			STATE_ATTRIBUTE_NAME, state //
 		), reason);
-		getListeners().fire(TargetExecutionStateListener.class).executionStateChanged(this, state);
 	}
 
 }

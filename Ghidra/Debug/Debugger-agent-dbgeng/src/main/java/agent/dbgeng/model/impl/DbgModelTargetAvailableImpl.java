@@ -23,23 +23,26 @@ import agent.dbgeng.model.iface2.DbgModelTargetAvailableContainer;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 
-@TargetObjectSchemaInfo(name = "Available", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(name = "Available", elements = {
+	@TargetElementType(type = Void.class) }, attributes = {
+		@TargetAttributeType(type = Void.class) })
 public class DbgModelTargetAvailableImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetAvailable {
 
-	protected static final String PID_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "pid";
-	// TODO: DESCRIPTION, TYPE, USER?
+	protected static String indexAttachable(int pid, Integer base) {
+		String pidstr = Integer.toString(pid, base);
+		if (base == 16) {
+			pidstr = "0x" + pidstr;
+		}
+		return pidstr;
+	}
 
-	protected static String indexAttachable(int pid) {
-		return Integer.toHexString(pid);
+	protected static String keyAttachable(int pid, Integer base) {
+		return PathUtils.makeKey(indexAttachable(pid, base));
 	}
 
 	protected static String keyAttachable(int pid) {
-		return PathUtils.makeKey(indexAttachable(pid));
+		return PathUtils.makeKey(indexAttachable(pid, 16));
 	}
 
 	protected final int pid;
@@ -51,8 +54,7 @@ public class DbgModelTargetAvailableImpl extends DbgModelTargetObjectImpl
 
 		this.changeAttributes(List.of(), List.of(), Map.of(//
 			PID_ATTRIBUTE_NAME, (long) pid, //
-			DISPLAY_ATTRIBUTE_NAME, keyAttachable(pid) + " : " + name.trim(),
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, keyAttachable(pid) + " : " + name.trim() //
 		), "Initialized");
 	}
 
@@ -62,8 +64,7 @@ public class DbgModelTargetAvailableImpl extends DbgModelTargetObjectImpl
 
 		this.changeAttributes(List.of(), List.of(), Map.of(//
 			PID_ATTRIBUTE_NAME, (long) pid, //
-			DISPLAY_ATTRIBUTE_NAME, keyAttachable(pid), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, keyAttachable(pid) //
 		), "Initialized");
 	}
 
@@ -71,6 +72,12 @@ public class DbgModelTargetAvailableImpl extends DbgModelTargetObjectImpl
 	@Override
 	public long getPid() {
 		return pid;
+	}
+
+	public void setBase(Object value) {
+		this.changeAttributes(List.of(), List.of(), Map.of(//
+			DISPLAY_ATTRIBUTE_NAME, keyAttachable(pid, (Integer) value) //
+		), "Initialized");
 	}
 
 }

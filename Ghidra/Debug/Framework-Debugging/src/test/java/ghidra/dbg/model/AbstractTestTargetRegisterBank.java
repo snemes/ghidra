@@ -23,8 +23,8 @@ import ghidra.dbg.error.DebuggerRegisterAccessException;
 import ghidra.dbg.target.TargetRegisterBank;
 import ghidra.program.model.address.Address;
 
-public abstract class AbstractTestTargetRegisterBank<T extends AbstractTestTargetRegisterBank<T, P>, P extends TestTargetObject>
-		extends DefaultTestTargetObject<TestTargetObject, P> implements TargetRegisterBank<T> {
+public abstract class AbstractTestTargetRegisterBank<P extends TestTargetObject>
+		extends DefaultTestTargetObject<TestTargetObject, P> implements TargetRegisterBank {
 
 	protected final TestTargetRegisterContainer regs;
 	public final Map<String, byte[]> regVals = new HashMap<>();
@@ -54,10 +54,10 @@ public abstract class AbstractTestTargetRegisterBank<T extends AbstractTestTarge
 			}
 			result.put(n, v);
 		}
-		return regs.getModel().future(result).thenApply(__ -> {
-			listeners.fire(TargetRegisterBankListener.class).registersUpdated(this, result);
+		return model.gateFuture(regs.getModel().future(result).thenApply(__ -> {
+			listeners.fire.registersUpdated(this, result);
 			return result;
-		});
+		}));
 	}
 
 	protected CompletableFuture<Void> writeRegs(Map<String, byte[]> values,
@@ -80,12 +80,12 @@ public abstract class AbstractTestTargetRegisterBank<T extends AbstractTestTarge
 			}
 		}
 		future.thenAccept(__ -> {
-			listeners.fire(TargetRegisterBankListener.class).registersUpdated(this, updates);
+			listeners.fire.registersUpdated(this, updates);
 		});
-		return future;
+		return model.gateFuture(future);
 	}
 
-	public void setFromBank(T bank) {
+	public void setFromBank(AbstractTestTargetRegisterBank<?> bank) {
 		//Map<String, byte[]> updates = new HashMap<>();
 		//updates.putAll(bank.regVals);
 		regVals.putAll(bank.regVals);

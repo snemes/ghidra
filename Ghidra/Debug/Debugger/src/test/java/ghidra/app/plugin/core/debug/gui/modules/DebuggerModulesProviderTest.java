@@ -21,8 +21,7 @@ import java.awt.event.MouseEvent;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.*;
 
 import com.google.common.collect.Range;
 
@@ -35,7 +34,6 @@ import ghidra.app.plugin.core.debug.gui.listing.DebuggerListingProvider;
 import ghidra.app.plugin.core.debug.gui.modules.DebuggerBlockChooserDialog.MemoryBlockRow;
 import ghidra.app.plugin.core.debug.gui.modules.DebuggerModuleMapProposalDialog.ModuleMapTableColumns;
 import ghidra.app.plugin.core.debug.gui.modules.DebuggerSectionMapProposalDialog.SectionMapTableColumns;
-import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceTest;
 import ghidra.app.services.DebuggerListingService;
 import ghidra.app.services.DebuggerStaticMappingService.ModuleMapEntry;
 import ghidra.app.services.DebuggerStaticMappingService.SectionMapEntry;
@@ -75,10 +73,6 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 	protected TraceModule modLib;
 	protected TraceSection secLibText;
 	protected TraceSection secLibData;
-
-	static {
-		DebuggerModelServiceTest.addTestModelPathPatterns();
-	}
 
 	@Before
 	public void setUpModulesProviderTest() throws Exception {
@@ -494,6 +488,7 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 	}
 
 	@Test
+	@Ignore("This action is hidden until supported")
 	public void testActionCaptureTypes() throws Exception {
 		assertFalse(modulesProvider.actionCaptureTypes.isEnabled());
 		createTestModel();
@@ -523,7 +518,7 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 		// TODO: When action is included, put this assertion back
 		//assertTrue(modulesProvider.actionCaptureTypes.isEnabled());
 
-		performAction(modulesProvider.actionCaptureTypes, false);
+		performAction(modulesProvider.actionCaptureTypes, true);
 		waitForBusyTool(tool);
 		waitForDomainObject(trace);
 
@@ -533,11 +528,14 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 		DataType expType =
 			conv.convertTargetDataType(typedef).get(DEFAULT_WAIT_TIMEOUT, TimeUnit.MILLISECONDS);
 		// TODO: Some heuristic or convention to extract the module name, if applicable
-		DataType actType = dtm.getDataType("/Processes[1].Modules[first_proc].Types/myInt");
-		assertTypeEquals(expType, actType);
+		waitForPass(() -> {
+			DataType actType = dtm.getDataType("/Processes[1].Modules[first_proc].Types/myInt");
+			assertTypeEquals(expType, actType);
+		});
 
 		// TODO: When capture-types action is included, put this assertion back
 		//assertTrue(modulesProvider.actionCaptureTypes.isEnabled());
+		waitForLock(trace);
 		recorder.stopRecording();
 		waitForSwing();
 		assertFalse(modulesProvider.actionCaptureTypes.isEnabled());
@@ -567,11 +565,15 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 
 		traceManager.activateTrace(trace);
 		waitForSwing();
-		modulesProvider.setSelectedModules(Set.of(recorder.getTraceModule(module)));
-		waitForSwing();
-		assertTrue(modulesProvider.actionCaptureSymbols.isEnabled());
+		waitForPass(() -> {
+			TraceModule traceModule = recorder.getTraceModule(module);
+			assertNotNull(traceModule);
+			modulesProvider.setSelectedModules(Set.of(traceModule));
+			waitForSwing();
+			assertTrue(modulesProvider.actionCaptureSymbols.isEnabled());
+		});
 
-		performAction(modulesProvider.actionCaptureSymbols, false);
+		performAction(modulesProvider.actionCaptureSymbols, true);
 		waitForBusyTool(tool);
 		waitForDomainObject(trace);
 
@@ -589,6 +591,7 @@ public class DebuggerModulesProviderTest extends AbstractGhidraHeadedDebuggerGUI
 		// TODO: Check data type once those are captured in Data units.
 
 		assertTrue(modulesProvider.actionCaptureSymbols.isEnabled());
+		waitForLock(trace);
 		recorder.stopRecording();
 		waitForSwing();
 		assertFalse(modulesProvider.actionCaptureSymbols.isEnabled());

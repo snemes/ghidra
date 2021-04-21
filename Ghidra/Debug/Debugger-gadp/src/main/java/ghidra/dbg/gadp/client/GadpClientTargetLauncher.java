@@ -19,13 +19,11 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import ghidra.dbg.gadp.protocol.Gadp;
-import ghidra.dbg.gadp.util.GadpValueUtils;
 import ghidra.dbg.target.TargetLauncher;
 import ghidra.dbg.target.TargetMethod;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
 
-public interface GadpClientTargetLauncher
-		extends GadpClientTargetObject, TargetLauncher<GadpClientTargetLauncher> {
+public interface GadpClientTargetLauncher extends GadpClientTargetObject, TargetLauncher {
 	@Override
 	default CompletableFuture<Void> launch(Map<String, ?> arguments) {
 		getDelegate().assertValid();

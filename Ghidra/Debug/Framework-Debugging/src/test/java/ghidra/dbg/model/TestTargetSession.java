@@ -21,31 +21,34 @@ import java.util.concurrent.CompletableFuture;
 
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetModelRoot;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
+import ghidra.dbg.target.schema.EnumerableTargetObjectSchema;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 
 public class TestTargetSession extends DefaultTargetModelRoot
-		implements TestTargetObject, TargetFocusScope<TestTargetSession>,
-		TargetEventScope<TestTargetSession>, TargetLauncher<TestTargetSession> {
+		implements TestTargetObject, TargetFocusScope, TargetEventScope, TargetLauncher {
+
 	public final TestTargetEnvironment environment;
 	public final TestTargetProcessContainer processes;
 	public final TestTargetInterpreter interpreter;
 	public final TestMimickJavaLauncher mimickJavaLauncher;
 
 	public TestTargetSession(TestDebuggerObjectModel model, String rootHint) {
-		super(model, rootHint);
+		this(model, rootHint, EnumerableTargetObjectSchema.OBJECT);
+	}
+
+	public TestTargetSession(TestDebuggerObjectModel model, String rootHint,
+			TargetObjectSchema schema) {
+		super(model, rootHint, schema);
 		environment = new TestTargetEnvironment(this);
 		processes = new TestTargetProcessContainer(this);
 		interpreter = new TestTargetInterpreter(this);
 		mimickJavaLauncher = new TestMimickJavaLauncher(this);
 
-		changeAttributes(List.of(), List.of(
-			environment,
-			processes,
-			interpreter,
-			mimickJavaLauncher),
-			Map.of(), "Initialized");
+		changeAttributes(List.of(),
+			List.of(environment, processes, interpreter, mimickJavaLauncher), Map.of(),
+			"Initialized");
 	}
 
 	public TestTargetProcess addProcess(int pid) {
@@ -58,20 +61,17 @@ public class TestTargetSession extends DefaultTargetModelRoot
 	}
 
 	@Override
-	public CompletableFuture<Void> requestFocus(TargetObjectRef obj) {
-		return getModel().future(null).thenAccept(__ -> {
-			changeAttributes(List.of(), List.of(), Map.of(
-				FOCUS_ATTRIBUTE_NAME, obj //
+	public CompletableFuture<Void> requestFocus(TargetObject obj) {
+		return model.gateFuture(getModel().future(null).thenAccept(__ -> {
+			changeAttributes(List.of(), List.of(), Map.of(FOCUS_ATTRIBUTE_NAME, obj //
 			), "Focus requested");
-			listeners.fire(TargetFocusScopeListener.class).focusChanged(this, obj);
-		});
+		}));
 	}
 
 	public void simulateStep(TestTargetThread eventThread) {
 		eventThread.setState(TargetExecutionState.RUNNING);
-		listeners.fire(TargetEventScopeListener.class)
-				.event(this, eventThread, TargetEventType.STEP_COMPLETED,
-					"Test thread completed a step", List.of());
+		listeners.fire.event(this, eventThread, TargetEventType.STEP_COMPLETED,
+			"Test thread completed a step", List.of());
 		eventThread.setState(TargetExecutionState.STOPPED);
 	}
 

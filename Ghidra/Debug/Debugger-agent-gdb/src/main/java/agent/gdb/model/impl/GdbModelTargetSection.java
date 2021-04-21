@@ -26,14 +26,14 @@ import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.*;
 
-@TargetObjectSchemaInfo(name = "Section", elements = {
-	@TargetElementType(type = Void.class)
-}, attributes = {
-	@TargetAttributeType(type = Void.class)
-})
-public class GdbModelTargetSection
-		extends DefaultTargetObject<TargetObject, GdbModelTargetSectionContainer>
-		implements TargetSection<GdbModelTargetSection> {
+@TargetObjectSchemaInfo(
+	name = "Section",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(type = Void.class) })
+public class GdbModelTargetSection extends
+		DefaultTargetObject<TargetObject, GdbModelTargetSectionContainer> implements TargetSection {
 
 	public static final String VISIBLE_RANGE_ATTRIBUTE_NAME = "range";
 
@@ -56,6 +56,7 @@ public class GdbModelTargetSection
 		super(sections.impl, sections, keySection(section), "Section");
 		this.impl = sections.impl;
 		this.section = section;
+		impl.addModelObject(section, this);
 
 		this.module = module;
 		this.range = doGetRange();
@@ -63,8 +64,7 @@ public class GdbModelTargetSection
 			MODULE_ATTRIBUTE_NAME, module,
 			RANGE_ATTRIBUTE_NAME, range,
 			VISIBLE_RANGE_ATTRIBUTE_NAME, range,
-			DISPLAY_ATTRIBUTE_NAME, section.getName(),
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED),
+			DISPLAY_ATTRIBUTE_NAME, section.getName()),
 			"Initialized");
 	}
 

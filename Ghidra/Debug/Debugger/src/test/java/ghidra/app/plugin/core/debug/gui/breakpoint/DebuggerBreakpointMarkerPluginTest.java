@@ -41,12 +41,11 @@ import ghidra.app.plugin.core.debug.gui.AbstractGhidraHeadedDebuggerGUITest;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources.*;
 import ghidra.app.plugin.core.debug.gui.listing.DebuggerListingPlugin;
-import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceTest;
 import ghidra.app.services.*;
 import ghidra.app.services.LogicalBreakpoint.Enablement;
 import ghidra.app.util.viewer.listingpanel.ListingPanel;
-import ghidra.dbg.target.TargetBreakpointContainer;
 import ghidra.dbg.target.TargetBreakpointSpec.TargetBreakpointKind;
+import ghidra.dbg.target.TargetBreakpointSpecContainer;
 import ghidra.framework.store.LockException;
 import ghidra.program.disassemble.Disassembler;
 import ghidra.program.model.address.Address;
@@ -74,10 +73,6 @@ public class DebuggerBreakpointMarkerPluginTest extends AbstractGhidraHeadedDebu
 	protected static final Color DE_COLOR = new Color(255, 192, 128);
 	protected static final Color ED_COLOR = new Color(255, 128, 192);
 
-	static {
-		DebuggerModelServiceTest.addTestModelPathPatterns();
-	}
-
 	protected DebuggerBreakpointMarkerPlugin breakpointMarkerPlugin;
 	protected DebuggerListingPlugin listingPlugin;
 	protected CodeBrowserPlugin codeBrowserPlugin;
@@ -100,8 +95,8 @@ public class DebuggerBreakpointMarkerPluginTest extends AbstractGhidraHeadedDebu
 	protected void addLiveMemoryAndBreakpoint(TraceRecorder recorder)
 			throws InterruptedException, ExecutionException, TimeoutException {
 		mb.testProcess1.addRegion("bin:.text", mb.rng(0x55550000, 0x55550fff), "rx");
-		TargetBreakpointContainer<?> cont = getBreakpointContainer(recorder);
-		cont.placeBreakpoint(mb.addr(0x55550123), Set.of(TargetBreakpointKind.SOFTWARE))
+		TargetBreakpointSpecContainer cont = getBreakpointContainer(recorder);
+		cont.placeBreakpoint(mb.addr(0x55550123), Set.of(TargetBreakpointKind.SW_EXECUTE))
 				.get(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);
 	}
 

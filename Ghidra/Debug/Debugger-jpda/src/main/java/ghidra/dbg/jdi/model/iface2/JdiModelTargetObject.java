@@ -21,6 +21,7 @@ import java.util.concurrent.CompletableFuture;
 
 import com.sun.jdi.*;
 
+import ghidra.dbg.DebuggerModelListener;
 import ghidra.dbg.agent.InvalidatableTargetObjectIf;
 import ghidra.dbg.jdi.manager.JdiManager;
 import ghidra.dbg.jdi.model.*;
@@ -53,11 +54,9 @@ public interface JdiModelTargetObject extends TargetObject, InvalidatableTargetO
 	@Override
 	public CompletableFuture<? extends Map<String, ?>> fetchAttributes();
 
-	public TargetObject getImplParent();
-
 	public Delta<?, ?> changeAttributes(List<String> remove, Map<String, ?> add, String reason);
 
-	public ListenerSet<TargetObjectListener> getListeners();
+	public ListenerSet<DebuggerModelListener> getListeners();
 
 	public default JdiModelTargetObject getInstance(Mirror object) {
 		JdiModelTargetObject targetObject = getTargetObject(object);

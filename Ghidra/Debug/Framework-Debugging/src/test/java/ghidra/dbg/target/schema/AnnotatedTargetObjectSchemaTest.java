@@ -22,11 +22,10 @@ import java.util.concurrent.CompletableFuture;
 
 import org.junit.Test;
 
-import ghidra.dbg.DebuggerObjectModel;
-import ghidra.dbg.agent.DefaultTargetModelRoot;
-import ghidra.dbg.agent.DefaultTargetObject;
+import ghidra.dbg.agent.*;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.schema.DefaultTargetObjectSchema.DefaultAttributeSchema;
+import ghidra.dbg.target.schema.TargetObjectSchema.ResyncMode;
 import ghidra.dbg.target.schema.TargetObjectSchema.SchemaName;
 
 public class AnnotatedTargetObjectSchemaTest {
@@ -42,8 +41,6 @@ public class AnnotatedTargetObjectSchemaTest {
 			EnumerableTargetObjectSchema.STRING.getName(), false, false, true), null);
 		builder.addAttributeSchema(new DefaultAttributeSchema("_kind",
 			EnumerableTargetObjectSchema.STRING.getName(), false, true, true), null);
-		builder.addAttributeSchema(new DefaultAttributeSchema("_update_mode",
-			EnumerableTargetObjectSchema.UPDATE_MODE.getName(), false, false, true), null);
 		builder.addAttributeSchema(new DefaultAttributeSchema("_order",
 			EnumerableTargetObjectSchema.INT.getName(), false, false, true), null);
 		builder.addAttributeSchema(new DefaultAttributeSchema("_modified",
@@ -53,7 +50,7 @@ public class AnnotatedTargetObjectSchemaTest {
 
 	@TargetObjectSchemaInfo
 	static class TestAnnotatedTargetRootPlain extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootPlain(DebuggerObjectModel model, String typeHint) {
+		public TestAnnotatedTargetRootPlain(AbstractDebuggerObjectModel model, String typeHint) {
 			super(model, typeHint);
 		}
 	}
@@ -71,7 +68,7 @@ public class AnnotatedTargetObjectSchemaTest {
 
 	@TargetObjectSchemaInfo(elements = @TargetElementType(type = Void.class))
 	static class TestAnnotatedTargetRootNoElems extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootNoElems(DebuggerObjectModel model, String typeHint) {
+		public TestAnnotatedTargetRootNoElems(AbstractDebuggerObjectModel model, String typeHint) {
 			super(model, typeHint);
 		}
 	}
@@ -91,16 +88,16 @@ public class AnnotatedTargetObjectSchemaTest {
 	@TargetObjectSchemaInfo(name = "Process")
 	static class TestAnnotatedTargetProcessStub
 			extends DefaultTargetObject<TargetObject, TargetObject>
-			implements TargetProcess<TestAnnotatedTargetProcessStub> {
-		public TestAnnotatedTargetProcessStub(DebuggerObjectModel model, TargetObject parent,
-				String key, String typeHint) {
+			implements TargetProcess {
+		public TestAnnotatedTargetProcessStub(AbstractDebuggerObjectModel model,
+				TargetObject parent, String key, String typeHint) {
 			super(model, parent, key, typeHint);
 		}
 	}
 
 	@TargetObjectSchemaInfo(name = "Root")
 	static class TestAnnotatedTargetRootOverriddenFetchElems extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootOverriddenFetchElems(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootOverriddenFetchElems(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -131,7 +128,7 @@ public class AnnotatedTargetObjectSchemaTest {
 	@TargetObjectSchemaInfo(name = "ProcessContainer")
 	static class TestAnnotatedProcessContainer
 			extends DefaultTargetObject<TestAnnotatedTargetProcessStub, TargetObject> {
-		public TestAnnotatedProcessContainer(DebuggerObjectModel model, TargetObject parent,
+		public TestAnnotatedProcessContainer(AbstractDebuggerObjectModel model, TargetObject parent,
 				String key, String typeHint) {
 			super(model, parent, key, typeHint);
 		}
@@ -151,18 +148,18 @@ public class AnnotatedTargetObjectSchemaTest {
 	}
 
 	@TargetObjectSchemaInfo(name = "Process")
-	static class TestAnnotatedTargetProcessParam<T>
+	static class TestAnnotatedTargetProcessParam
 			extends DefaultTargetObject<TargetObject, TargetObject>
-			implements TargetProcess<TestAnnotatedTargetProcessParam<T>> {
-		public TestAnnotatedTargetProcessParam(DebuggerObjectModel model, TargetObject parent,
-				String key, String typeHint) {
+			implements TargetProcess {
+		public TestAnnotatedTargetProcessParam(AbstractDebuggerObjectModel model,
+				TargetObject parent, String key, String typeHint) {
 			super(model, parent, key, typeHint);
 		}
 	}
 
 	@TargetObjectSchemaInfo
 	static class TestAnnotatedTargetRootWithAnnotatedAttrs extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootWithAnnotatedAttrs(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithAnnotatedAttrs(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -173,7 +170,7 @@ public class AnnotatedTargetObjectSchemaTest {
 		}
 
 		@TargetAttributeType
-		public TestAnnotatedTargetProcessParam<?> getSomeObjectAttribute() {
+		public TestAnnotatedTargetProcessParam getSomeObjectAttribute() {
 			return null; // Doesn't matter
 		}
 	}
@@ -209,7 +206,7 @@ public class AnnotatedTargetObjectSchemaTest {
 			@TargetElementType(index = "reserved", type = Void.class)
 		})
 	static class TestAnnotatedTargetRootWithListedAttrs extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootWithListedAttrs(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithListedAttrs(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -237,13 +234,36 @@ public class AnnotatedTargetObjectSchemaTest {
 		assertEquals("TestAnnotatedTargetRootWithListedAttrs", schema.getName().toString());
 	}
 
+	@TargetObjectSchemaInfo(elementResync = ResyncMode.ONCE, attributeResync = ResyncMode.ALWAYS)
+	static class TestAnnotatedTargetRootWithResyncModes extends DefaultTargetModelRoot {
+
+		public TestAnnotatedTargetRootWithResyncModes(AbstractDebuggerObjectModel model,
+				String typeHint) {
+			super(model, typeHint);
+		}
+	}
+
+	@Test
+	public void testAnnotatedRootWithResyuncModes() {
+		AnnotatedSchemaContext ctx = new AnnotatedSchemaContext();
+		TargetObjectSchema schema =
+			ctx.getSchemaForClass(TestAnnotatedTargetRootWithResyncModes.class);
+
+		TargetObjectSchema exp = addBasicAttributes(ctx.builder(schema.getName()))
+				.addInterface(TargetAggregate.class)
+				.setElementResyncMode(ResyncMode.ONCE)
+				.setAttributeResyncMode(ResyncMode.ALWAYS)
+				.build();
+		assertEquals(exp, schema);
+	}
+
 	static class NotAPrimitive {
 	}
 
 	@TargetObjectSchemaInfo
 	static class TestAnnotatedTargetRootWithAnnotatedAttrsBadType extends DefaultTargetModelRoot {
 
-		public TestAnnotatedTargetRootWithAnnotatedAttrsBadType(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithAnnotatedAttrsBadType(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -270,10 +290,10 @@ public class AnnotatedTargetObjectSchemaTest {
 	}
 
 	@TargetObjectSchemaInfo
-	static class TestAnnotatedTargetRootWithAnnotatedAttrsNonUnique<T extends Dummy & TargetProcess<T> & TargetInterpreter<T>>
+	static class TestAnnotatedTargetRootWithAnnotatedAttrsNonUnique<T extends Dummy & TargetProcess & TargetInterpreter>
 			extends DefaultTargetModelRoot {
 
-		public TestAnnotatedTargetRootWithAnnotatedAttrsNonUnique(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithAnnotatedAttrsNonUnique(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -291,10 +311,10 @@ public class AnnotatedTargetObjectSchemaTest {
 	}
 
 	@TargetObjectSchemaInfo
-	static class TestAnnotatedTargetRootWithElemsNonUnique<T extends Dummy & TargetProcess<T> & TargetInterpreter<T>>
+	static class TestAnnotatedTargetRootWithElemsNonUnique<T extends Dummy & TargetProcess & TargetInterpreter>
 			extends DefaultTargetModelRoot {
 
-		public TestAnnotatedTargetRootWithElemsNonUnique(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithElemsNonUnique(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -314,7 +334,7 @@ public class AnnotatedTargetObjectSchemaTest {
 
 	@TargetObjectSchemaInfo
 	static class TestAnnotatedTargetRootWithAnnotatedAttrsBadName extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootWithAnnotatedAttrsBadName(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithAnnotatedAttrsBadName(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -333,7 +353,7 @@ public class AnnotatedTargetObjectSchemaTest {
 
 	@TargetObjectSchemaInfo
 	static class TestAnnotatedTargetRootWithAnnotatedAttrsBadGetter extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootWithAnnotatedAttrsBadGetter(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithAnnotatedAttrsBadGetter(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}
@@ -353,7 +373,7 @@ public class AnnotatedTargetObjectSchemaTest {
 	@TargetObjectSchemaInfo(
 		attributes = @TargetAttributeType(name = "some_attr", type = NotAPrimitive.class))
 	static class TestAnnotatedTargetRootWithListedAttrsBadType extends DefaultTargetModelRoot {
-		public TestAnnotatedTargetRootWithListedAttrsBadType(DebuggerObjectModel model,
+		public TestAnnotatedTargetRootWithListedAttrsBadType(AbstractDebuggerObjectModel model,
 				String typeHint) {
 			super(model, typeHint);
 		}

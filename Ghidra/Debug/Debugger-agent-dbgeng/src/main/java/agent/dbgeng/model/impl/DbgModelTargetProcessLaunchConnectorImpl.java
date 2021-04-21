@@ -27,11 +27,14 @@ import ghidra.dbg.target.TargetMethod.ParameterDescription;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
 import ghidra.dbg.target.schema.*;
 
-@TargetObjectSchemaInfo(name = "ProcessLaunchConnector", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "ProcessLaunchConnector",
+	elements = { //
+		@TargetElementType(type = Void.class) //
+	},
+	attributes = { //
+		@TargetAttributeType(type = Void.class) //
+	})
 public class DbgModelTargetProcessLaunchConnectorImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetConnector {
 
@@ -46,13 +49,12 @@ public class DbgModelTargetProcessLaunchConnectorImpl extends DbgModelTargetObje
 		changeAttributes(List.of(), List.of(), Map.of( //
 			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
 			TargetMethod.PARAMETERS_ATTRIBUTE_NAME,
-			paramDescs = TargetParameterMap.copyOf(computeParameters()), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			paramDescs = TargetParameterMap.copyOf(computeParameters()) //
 		), "Initialized");
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
+	public CompletableFuture<Void> setActive() {
 		connectors.setDefaultConnector(this);
 		return CompletableFuture.completedFuture(null);
 	}
@@ -60,9 +62,9 @@ public class DbgModelTargetProcessLaunchConnectorImpl extends DbgModelTargetObje
 	protected Map<String, ParameterDescription<?>> computeParameters() {
 		HashMap<String, ParameterDescription<?>> map =
 			new HashMap<String, ParameterDescription<?>>();
-		ParameterDescription<String> param = ParameterDescription.create(String.class,
-			"CommandLine", true, "", "Cmd", "executable to be launched");
-		map.put("Command line", param);
+		ParameterDescription<String> param = ParameterDescription.create(String.class, "args", true,
+			"", "Cmd", "executable to be launched");
+		map.put("args", param);
 		return map;
 	}
 

@@ -21,9 +21,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import ghidra.dbg.DebuggerTargetObjectIface;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
 import ghidra.dbg.error.DebuggerRegisterAccessException;
 import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 import ghidra.util.Msg;
 
 /**
@@ -34,27 +34,28 @@ import ghidra.util.Msg;
  * allows reflection of the registers' names and structures.
  */
 @DebuggerTargetObjectIface("RegisterBank")
-public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends TypedTargetObject<T> {
-	enum Private {
-		;
-		private abstract class Cls implements TargetRegisterBank<Cls> {
-		}
-	}
-
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<Private.Cls> tclass = (Class) TargetRegisterBank.class;
+public interface TargetRegisterBank extends TargetObject {
 
 	String DESCRIPTIONS_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "descriptions";
+	// TODO: Remove this stopgap once we implement register-value replay
+	String REGISTERVALS_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "register_values";
 
 	/**
 	 * Get the object describing the registers in this bank
 	 * 
+	 * <p>
+	 * TODO: {@link TargetRegisterContainer} ought to be removed. However, some models present a
+	 * complex structure for their register banks and containers, splitting the set into, e.g.,
+	 * User, Vector, etc. I suspect the simplest way for a client to accommodate this is to use
+	 * {@link TargetObjectSchema#searchFor(Class, boolean)}, passing {@link TargetRegister}. The
+	 * "canonical container" concept doesn't really work here, as that will yield each set, rather
+	 * than the full descriptions container.
+	 * 
 	 * @return a future which completes with object
 	 */
 	@TargetAttributeType(name = DESCRIPTIONS_ATTRIBUTE_NAME)
-	@SuppressWarnings("unchecked")
-	public default TypedTargetObjectRef<? extends TargetRegisterContainer<?>> getDescriptions() {
-		return getTypedRefAttributeNowByName(DESCRIPTIONS_ATTRIBUTE_NAME,
+	public default TargetRegisterContainer getDescriptions() {
+		return getTypedAttributeNowByName(DESCRIPTIONS_ATTRIBUTE_NAME,
 			TargetRegisterContainer.class, null);
 	}
 
@@ -74,7 +75,7 @@ public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends Typ
 	 * @return a future which completes with a name-value map of the values read
 	 */
 	public default CompletableFuture<? extends Map<String, byte[]>> readRegisters(
-			Collection<TargetRegister<?>> registers) {
+			Collection<TargetRegister> registers) {
 		return readRegistersNamed(
 			registers.stream().map(TargetRegister::getIndex).collect(Collectors.toSet()));
 	}
@@ -94,9 +95,9 @@ public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends Typ
 	 * @param values the register-value map to write
 	 * @return a future which completes upon successfully writing all given registers
 	 */
-	public default CompletableFuture<Void> writeRegisters(Map<TargetRegister<?>, byte[]> values) {
+	public default CompletableFuture<Void> writeRegisters(Map<TargetRegister, byte[]> values) {
 		Map<String, byte[]> named = new LinkedHashMap<>();
-		for (Entry<TargetRegister<?>, byte[]> ent : values.entrySet()) {
+		for (Entry<TargetRegister, byte[]> ent : values.entrySet()) {
 			named.put(ent.getKey().getIndex(), ent.getValue());
 		}
 		return writeRegistersNamed(named);
@@ -140,7 +141,7 @@ public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends Typ
 	 * @param register the register to read
 	 * @return a future which completes with the value read
 	 */
-	public default CompletableFuture<byte[]> readRegister(TargetRegister<?> register) {
+	public default CompletableFuture<byte[]> readRegister(TargetRegister register) {
 		return readRegister(register.getIndex());
 	}
 
@@ -152,7 +153,7 @@ public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends Typ
 	 * @param value the value to write
 	 * @return a future which completes upon successfully writing the register
 	 */
-	public default CompletableFuture<Void> writeRegister(TargetRegister<?> register, byte[] value) {
+	public default CompletableFuture<Void> writeRegister(TargetRegister register, byte[] value) {
 		return writeRegistersNamed(Map.of(register.getIndex(), value));
 	}
 
@@ -207,21 +208,5 @@ public interface TargetRegisterBank<T extends TargetRegisterBank<T>> extends Typ
 			Msg.error(this, "Error clearing register caches");
 			return null;
 		});
-	}
-
-	public interface TargetRegisterBankListener extends TargetObjectListener {
-		/**
-		 * Registers were successfully read or written
-		 * 
-		 * <p>
-		 * If the implementation employs a cache, then it need only report reads or writes which
-		 * updated that cache. However, that cache must be invalidated whenever any other event
-		 * occurs which could change register values, e.g., the target stepping or running.
-		 * 
-		 * @param bank this register bank object
-		 * @param updates a name-value map of updated registers
-		 */
-		default void registersUpdated(TargetRegisterBank<?> bank, Map<String, byte[]> updates) {
-		}
 	}
 }

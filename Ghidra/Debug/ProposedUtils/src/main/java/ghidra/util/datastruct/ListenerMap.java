@@ -17,6 +17,8 @@ package ghidra.util.datastruct;
 
 import java.lang.reflect.*;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.google.common.cache.*;
@@ -49,11 +51,23 @@ import ghidra.util.Msg;
  * @param <V> the type of listeners
  */
 public class ListenerMap<K, P, V extends P> {
+	public static final Executor CALLING_THREAD = new Executor() {
+		@Override
+		public void execute(Runnable command) {
+			command.run();
+		}
+	};
+
 	protected static final AtomicReference<Throwable> firstExc = new AtomicReference<>();
 
 	protected static void reportError(Object listener, Throwable e) {
-		Msg.error(listener, "Listener " + listener + " caused unexpected exception", e);
-		firstExc.accumulateAndGet(e, (o, n) -> o == null ? n : o);
+		if (e instanceof RejectedExecutionException) {
+			Msg.trace(listener, "Listener invocation rejected: " + e);
+		}
+		else {
+			Msg.error(listener, "Listener " + listener + " caused unexpected exception", e);
+			firstExc.accumulateAndGet(e, (o, n) -> o == null ? n : o);
+		}
 	}
 
 	/**
@@ -102,21 +116,45 @@ public class ListenerMap<K, P, V extends P> {
 
 		@Override
 		public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-			Collection<V> listenersVolatile = map.values();
-			for (V l : listenersVolatile) {
-				if (!ext.isAssignableFrom(l.getClass())) {
-					continue;
+			//Msg.debug(this, "Queuing invocation: " + method.getName() + " @" +
+			//	System.identityHashCode(executor));
+			// Listener adds/removes need to take immediate effect, even with queued events
+			executor.execute(() -> {
+				Collection<V> listenersVolatile;
+				synchronized (lock) {
+					listenersVolatile = map.values();
 				}
+				for (V l : listenersVolatile) {
+					if (!ext.isAssignableFrom(l.getClass())) {
+						continue;
+					}
+					//Msg.debug(this,
+					//	"Invoking: " + method.getName() + " @" + System.identityHashCode(executor));
+					try {
+						method.invoke(l, args);
+					}
+					catch (InvocationTargetException e) {
+						Throwable cause = e.getCause();
+						reportError(l, cause);
+					}
+					catch (Throwable e) {
+						reportError(l, e);
+					}
+				}
+			});
+			Set<ListenerMap<?, ? extends P, ?>> chainedVolatile;
+			synchronized (lock) {
+				chainedVolatile = chained;
+			}
+			for (ListenerMap<?, ? extends P, ?> c : chainedVolatile) {
+				// Invocation will check if assignable
+				@SuppressWarnings("unchecked")
+				T l = ((ListenerMap<?, P, ?>) c).fire(ext);
 				try {
 					method.invoke(l, args);
 				}
 				catch (InvocationTargetException e) {
 					Throwable cause = e.getCause();
-					for (Class<?> excCls : method.getExceptionTypes()) {
-						if (excCls.isInstance(e)) {
-							throw cause;
-						}
-					}
 					reportError(l, cause);
 				}
 				catch (Throwable e) {
@@ -127,8 +165,11 @@ public class ListenerMap<K, P, V extends P> {
 		}
 	}
 
+	private final Object lock = new Object();
 	private final Class<P> iface;
+	private final Executor executor;
 	private Map<K, V> map = createMap();
+	private Set<ListenerMap<?, ? extends P, ?>> chained = new LinkedHashSet<>();
 
 	/**
 	 * A proxy which passes invocations to each value of this map
@@ -146,11 +187,29 @@ public class ListenerMap<K, P, V extends P> {
 	 * <P>
 	 * The values in the map must implement the same interface.
 	 * 
+	 * <P>
+	 * Callbacks will be serviced by the invoking thread. This may be risking if the invoking thread
+	 * is "precious" to the invoker. There is no guarantee callbacks into client code will complete
+	 * in a timely fashion.
+	 * 
+	 * @param iface the interface to multiplex
+	 */
+	public ListenerMap(Class<P> iface) {
+		this(iface, CALLING_THREAD);
+	}
+
+	/**
+	 * Construct a new map whose proxy implements the given interface
+	 * 
+	 * <P>
+	 * The values in the map must implement the same interface.
+	 * 
 	 * @param iface the interface to multiplex
 	 */
 	@SuppressWarnings("unchecked")
-	public ListenerMap(Class<P> iface) {
+	public ListenerMap(Class<P> iface, Executor executor) {
 		this.iface = Objects.requireNonNull(iface);
+		this.executor = executor;
 		this.fire = (P) Proxy.newProxyInstance(this.getClass().getClassLoader(),
 			new Class[] { iface }, new ListenerHandler<>(iface));
 	}
@@ -176,6 +235,12 @@ public class ListenerMap<K, P, V extends P> {
 
 	@SuppressWarnings("unchecked")
 	public <T extends P> T fire(Class<T> ext) {
+		if (ext == iface) {
+			return ext.cast(fire);
+		}
+		if (!iface.isAssignableFrom(ext)) {
+			throw new IllegalArgumentException("Cannot fire on less-specific interface");
+		}
 		return (T) extFires.computeIfAbsent(ext,
 			e -> (P) Proxy.newProxyInstance(this.getClass().getClassLoader(),
 				new Class<?>[] { iface, ext }, new ListenerHandler<>(ext)));
@@ -186,21 +251,25 @@ public class ListenerMap<K, P, V extends P> {
 	}
 
 	public V put(K key, V val) {
-		if (map.get(key) == val) {
-			return val;
+		synchronized (lock) {
+			if (map.get(key) == val) {
+				return val;
+			}
+			Map<K, V> newMap = createMap();
+			newMap.putAll(map);
+			V result = newMap.put(key, val);
+			map = newMap;
+			return result;
 		}
-		Map<K, V> newMap = createMap();
-		newMap.putAll(map);
-		V result = newMap.put(key, val);
-		map = newMap;
-		return result;
 	}
 
 	public void putAll(ListenerMap<? extends K, P, ? extends V> that) {
-		Map<K, V> newMap = createMap();
-		newMap.putAll(map);
-		newMap.putAll(that.map);
-		map = newMap;
+		synchronized (lock) {
+			Map<K, V> newMap = createMap();
+			newMap.putAll(map);
+			newMap.putAll(that.map);
+			map = newMap;
+		}
 	}
 
 	public V get(K key) {
@@ -208,20 +277,57 @@ public class ListenerMap<K, P, V extends P> {
 	}
 
 	public V remove(K key) {
-		if (!map.containsKey(key)) {
-			return null;
+		synchronized (lock) {
+			if (!map.containsKey(key)) {
+				return null;
+			}
+			Map<K, V> newMap = createMap();
+			newMap.putAll(map);
+			V result = newMap.remove(key);
+			map = newMap;
+			return result;
 		}
-		Map<K, V> newMap = createMap();
-		newMap.putAll(map);
-		V result = newMap.remove(key);
-		map = newMap;
-		return result;
 	}
 
 	public void clear() {
-		if (map.isEmpty()) {
-			return;
+		synchronized (lock) {
+			if (map.isEmpty()) {
+				return;
+			}
+			map = createMap();
 		}
-		map = createMap();
+	}
+
+	public void addChained(ListenerMap<?, ? extends P, ?> map) {
+		synchronized (lock) {
+			if (chained.contains(map)) {
+				return;
+			}
+			Set<ListenerMap<?, ? extends P, ?>> newChained = new LinkedHashSet<>();
+			newChained.addAll(chained);
+			newChained.add(map);
+			chained = newChained;
+		}
+	}
+
+	public void removeChained(ListenerMap<?, ?, ?> map) {
+		synchronized (lock) {
+			if (!chained.contains(map)) {
+				return;
+			}
+			Set<ListenerMap<?, ? extends P, ?>> newChained = new LinkedHashSet<>();
+			newChained.addAll(chained);
+			newChained.remove(map);
+			chained = newChained;
+		}
+	}
+
+	public void clearChained() {
+		synchronized (lock) {
+			if (chained.isEmpty()) {
+				return;
+			}
+			chained = new LinkedHashSet<>();
+		}
 	}
 }

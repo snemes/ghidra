@@ -20,13 +20,13 @@ import static org.junit.Assert.*;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.junit.Test;
 
-import ghidra.dbg.DebuggerObjectModel;
 import ghidra.dbg.agent.*;
 import ghidra.dbg.target.*;
-import ghidra.dbg.target.TargetObject.TargetUpdateMode;
 import ghidra.dbg.target.schema.DefaultTargetObjectSchema.DefaultAttributeSchema;
 import ghidra.dbg.target.schema.TargetObjectSchema.AttributeSchema;
 import ghidra.dbg.target.schema.TargetObjectSchema.SchemaName;
@@ -56,12 +56,6 @@ public class TargetObjectSchemaValidationTest {
 
 		@Override
 		public AddressFactory getAddressFactory() {
-			fail();
-			return null;
-		}
-
-		@Override
-		public CompletableFuture<Void> close() {
 			fail();
 			return null;
 		}
@@ -105,24 +99,29 @@ public class TargetObjectSchemaValidationTest {
 	}
 
 	static class ValidatedModelRoot extends DefaultTargetModelRoot {
-		public ValidatedModelRoot(DebuggerObjectModel model, String typeHint,
+		public ValidatedModelRoot(AbstractDebuggerObjectModel model, String typeHint,
 				TargetObjectSchema schema) {
 			super(model, typeHint, schema);
 		}
 
 		@Override
-		protected boolean enforcesStrictSchema() {
+		public boolean enforcesStrictSchema() {
 			return true;
 		}
 	}
 
 	static class ValidatedObject extends DefaultTargetObject<TargetObject, TargetObject> {
-		public ValidatedObject(DebuggerObjectModel model, String key, TargetObjectSchema schema) {
-			super(model, null, key, "Object", schema);
+		public ValidatedObject(AbstractDebuggerObjectModel model, TargetObject parent, String key,
+				TargetObjectSchema schema) {
+			super(model, parent, key, "Object", schema);
+		}
+
+		public ValidatedObject(AbstractDebuggerObjectModel model, TargetObject parent, String key) {
+			super(model, parent, key, "Object");
 		}
 
 		@Override
-		protected boolean enforcesStrictSchema() {
+		public boolean enforcesStrictSchema() {
 			return true;
 		}
 	}
@@ -133,7 +132,8 @@ public class TargetObjectSchemaValidationTest {
 				.addInterface(TargetAggregate.class)
 				.buildAndAdd();
 
-		new ValidatedModelRoot(model, "Root", schemaRoot);
+		schemaRoot.validateTypeAndInterfaces(new ValidatedModelRoot(model, "Root", schemaRoot),
+			List.of(), null, true);
 		// pass
 	}
 
@@ -143,7 +143,8 @@ public class TargetObjectSchemaValidationTest {
 				.addInterface(TargetProcess.class)
 				.buildAndAdd();
 
-		new ValidatedModelRoot(model, "Root", schemaRoot);
+		schemaRoot.validateTypeAndInterfaces(new ValidatedModelRoot(model, "Root", schemaRoot),
+			List.of(), null, true);
 	}
 
 	protected ValidatedModelRoot createRootAttrWReq() {
@@ -169,9 +170,8 @@ public class TargetObjectSchemaValidationTest {
 		return wreq;
 	}
 
-	protected DefaultTargetObject<?, ?> createWReqIncorrect(TargetObject root, String name) {
-		DefaultTargetObject<?, ?> wreq =
-			new DefaultTargetObject<>(model, root, name, "Default");
+	protected ValidatedObject createWReqIncorrect(TargetObject root, String name) {
+		ValidatedObject wreq = new ValidatedObject(model, root, name);
 		return wreq;
 	}
 
@@ -183,10 +183,16 @@ public class TargetObjectSchemaValidationTest {
 	}
 
 	@Test(expected = AssertionError.class)
-	public void testAttributeValidationAtInsertViaSetAttributesErr() {
+	public void testAttributeValidationViaFetchAttributesErr()
+			throws InterruptedException, ExecutionException {
 		DefaultTargetModelRoot root = createRootAttrWReq();
 		DefaultTargetObject<?, ?> wreq = createWReqIncorrect(root, "my_attr");
-		root.setAttributes(List.of(wreq), Map.of(), "Initialized");
+		try {
+			wreq.fetchAttributes().get();
+		}
+		catch (ExecutionException e) {
+			ExceptionUtils.rethrow(e.getCause());
+		}
 	}
 
 	@Test
@@ -196,24 +202,10 @@ public class TargetObjectSchemaValidationTest {
 		root.changeAttributes(List.of(), List.of(wreq), Map.of(), "Initialized");
 	}
 
-	@Test(expected = AssertionError.class)
-	public void testAttributeValidationAtInsertViaChangeAttributesErr() {
-		DefaultTargetModelRoot root = createRootAttrWReq();
-		DefaultTargetObject<?, ?> wreq = createWReqIncorrect(root, "my_attr");
-		root.changeAttributes(List.of(), List.of(wreq), Map.of(), "Initialized");
-	}
-
 	@Test
 	public void testAttributeValidationAtInsertViaSetElements() {
 		DefaultTargetModelRoot root = createRootElemWReq();
 		DefaultTargetObject<?, ?> wreq = createWReqCorrect(root, "[1]");
-		root.setElements(List.of(wreq), Map.of(), "Initialized");
-	}
-
-	@Test(expected = AssertionError.class)
-	public void testAttributeValidationAtInsertViaSetElementsErr() {
-		DefaultTargetModelRoot root = createRootElemWReq();
-		DefaultTargetObject<?, ?> wreq = createWReqIncorrect(root, "[1]");
 		root.setElements(List.of(wreq), Map.of(), "Initialized");
 	}
 
@@ -225,19 +217,12 @@ public class TargetObjectSchemaValidationTest {
 	}
 
 	@Test(expected = AssertionError.class)
-	public void testAttributeValidationAtInsertViaChangeElementsErr() {
-		DefaultTargetModelRoot root = createRootElemWReq();
-		DefaultTargetObject<?, ?> wreq = createWReqIncorrect(root, "[1]");
-		root.changeElements(List.of(), List.of(wreq), Map.of(), "Initialized");
-	}
-
-	@Test(expected = AssertionError.class)
 	public void testValidateRequiredAttributeViaSetErr() {
 		TargetObjectSchema schema = ctx.builder(new SchemaName("test"))
 				.addAttributeSchema(new DefaultAttributeSchema("req",
 					EnumerableTargetObjectSchema.ANY.getName(), true, false, false), null)
 				.buildAndAdd();
-		ValidatedObject obj = new ValidatedObject(model, "Test", schema);
+		ValidatedObject obj = new ValidatedObject(model, null, "Test", schema);
 
 		obj.setAttributes(List.of(), Map.of("req", "Hello"), "Initialized");
 		obj.setAttributes(List.of(), Map.of(), "Test");
@@ -249,7 +234,7 @@ public class TargetObjectSchemaValidationTest {
 				.addAttributeSchema(new DefaultAttributeSchema("req",
 					EnumerableTargetObjectSchema.ANY.getName(), true, false, false), null)
 				.buildAndAdd();
-		ValidatedObject obj = new ValidatedObject(model, "Test", schema);
+		ValidatedObject obj = new ValidatedObject(model, null, "Test", schema);
 
 		obj.setAttributes(List.of(), Map.of("req", "Hello"), "Initialized");
 		obj.changeAttributes(List.of("req"), List.of(), Map.of(), "Test");
@@ -261,7 +246,7 @@ public class TargetObjectSchemaValidationTest {
 				.addAttributeSchema(new DefaultAttributeSchema("fix",
 					EnumerableTargetObjectSchema.ANY.getName(), false, true, false), null)
 				.buildAndAdd();
-		ValidatedObject obj = new ValidatedObject(model, "Test", schema);
+		ValidatedObject obj = new ValidatedObject(model, null, "Test", schema);
 
 		obj.setAttributes(List.of(), Map.of("fix", "Hello"), "Initialized");
 		obj.setAttributes(List.of(), Map.of("fix", "World"), "Test");
@@ -273,7 +258,7 @@ public class TargetObjectSchemaValidationTest {
 				.addAttributeSchema(new DefaultAttributeSchema("fix",
 					EnumerableTargetObjectSchema.ANY.getName(), false, true, false), null)
 				.buildAndAdd();
-		ValidatedObject obj = new ValidatedObject(model, "Test", schema);
+		ValidatedObject obj = new ValidatedObject(model, null, "Test", schema);
 
 		obj.setAttributes(List.of(), Map.of("fix", "Hello"), "Initialized");
 		// Removal of fixed attr also forbidden after it's set
@@ -282,8 +267,6 @@ public class TargetObjectSchemaValidationTest {
 
 	ValidatedObject createRepleteValidatedObject() {
 		TargetObjectSchema schema = ctx.builder(new SchemaName("test"))
-				.addAttributeSchema(new DefaultAttributeSchema("_update_mode",
-					EnumerableTargetObjectSchema.UPDATE_MODE.getName(), true, false, false), null)
 				.addAttributeSchema(new DefaultAttributeSchema("_display",
 					EnumerableTargetObjectSchema.STRING.getName(), true, false, false), null)
 				.addAttributeSchema(new DefaultAttributeSchema("int",
@@ -292,7 +275,7 @@ public class TargetObjectSchemaValidationTest {
 					EnumerableTargetObjectSchema.OBJECT.getName(), false, false, false), null)
 				.setDefaultAttributeSchema(AttributeSchema.DEFAULT_VOID)
 				.buildAndAdd();
-		ValidatedObject obj = new ValidatedObject(model, "Test", schema);
+		ValidatedObject obj = new ValidatedObject(model, null, "Test", schema);
 		return obj;
 	}
 
@@ -301,12 +284,10 @@ public class TargetObjectSchemaValidationTest {
 		ValidatedObject obj = createRepleteValidatedObject();
 		obj.setAttributes(List.of(), Map.of(
 			"_display", "Hello",
-			"_update_mode", TargetUpdateMode.SOLICITED,
 			"int", 5),
 			"Test");
 		obj.setAttributes(List.of(), Map.of(
 			"_display", "World",
-			"_update_mode", TargetUpdateMode.FIXED,
 			"int", 6),
 			"Test");
 	}
@@ -323,7 +304,6 @@ public class TargetObjectSchemaValidationTest {
 		ValidatedObject obj = createRepleteValidatedObject();
 		obj.setAttributes(List.of(), Map.of(
 			"_display", "World",
-			"_update_mode", TargetUpdateMode.UNSOLICITED,
 			"int", 7.0),
 			"Test");
 	}

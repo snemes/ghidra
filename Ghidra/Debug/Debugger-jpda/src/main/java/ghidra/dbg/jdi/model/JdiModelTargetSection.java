@@ -26,14 +26,17 @@ import ghidra.dbg.target.TargetSection;
 import ghidra.dbg.target.schema.*;
 import ghidra.program.model.address.AddressRange;
 
-@TargetObjectSchemaInfo(name = "Section", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "Section",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(type = Void.class)
+	})
 public class JdiModelTargetSection extends JdiModelTargetObjectImpl implements //
-		//TargetMemory<JdiModelTargetSection>,  
-		TargetMemoryRegion<JdiModelTargetSection>, TargetSection<JdiModelTargetSection> {
+		//TargetMemory,
+		TargetMemoryRegion, TargetSection {
 
 	protected final Method method;
 	private AddressRange range;
@@ -49,8 +52,7 @@ public class JdiModelTargetSection extends JdiModelTargetObjectImpl implements /
 			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
 			MODULE_ATTRIBUTE_NAME, parent.getClassType(), //
 			READABLE_ATTRIBUTE_NAME, true, //
-			MEMORY_ATTRIBUTE_NAME, parent, TargetMemoryRegion.RANGE_ATTRIBUTE_NAME, range, //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			MEMORY_ATTRIBUTE_NAME, parent, TargetMemoryRegion.RANGE_ATTRIBUTE_NAME, range //
 		), "Initialized");
 	}
 
@@ -63,8 +65,7 @@ public class JdiModelTargetSection extends JdiModelTargetObjectImpl implements /
 		changeAttributes(List.of(), List.of(), Map.of( //
 			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
 			MODULE_ATTRIBUTE_NAME, parent.getClassType(), //
-			TargetMemoryRegion.RANGE_ATTRIBUTE_NAME, range, //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			TargetMemoryRegion.RANGE_ATTRIBUTE_NAME, range //
 		), "Initialized");
 	}
 

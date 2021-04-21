@@ -15,36 +15,22 @@
  */
 package ghidra.app.plugin.core.debug.gui.objects;
 
-import static ghidra.async.AsyncUtils.*;
-
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicReference;
 
 import org.jdom.Element;
 
-import ghidra.async.AsyncFence;
-import ghidra.async.TypeSpec;
-import ghidra.dbg.DebugModelConventions;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.TargetObject;
-import ghidra.dbg.target.TargetProcess;
 import ghidra.dbg.util.PathUtils;
-import ghidra.util.Msg;
-import ghidra.util.datastruct.ListenerSet;
 import ghidra.util.xml.XmlUtilities;
 
-public class ObjectContainer implements Comparable {
+public class ObjectContainer implements Comparable<ObjectContainer> {
 
 	private DebuggerObjectsProvider provider;
 	protected TargetObject targetObject;
-	protected TargetObjectRef targetObjectRef;
-	private final Map<String, TargetObjectRef> elementMap = new LinkedHashMap<>();
+	private final Map<String, TargetObject> elementMap = new LinkedHashMap<>();
 	private final Map<String, Object> attributeMap = new LinkedHashMap<>();
 	private Set<ObjectContainer> currentChildren = new TreeSet<>();
-
-	public final ListenerSet<ObjectContainerListener> listeners =
-		new ListenerSet<>(ObjectContainerListener.class);
 
 	private boolean immutable;
 	private boolean visible = true;
@@ -54,27 +40,14 @@ public class ObjectContainer implements Comparable {
 	private String treePath;
 	public String linkKey;
 
-	public ObjectContainer(TargetObjectRef ref, String linkKey) {
+	public ObjectContainer(TargetObject to, String linkKey) {
 		this.linkKey = linkKey;
 		this.isLink = linkKey != null;
-		if (ref != null) {
-			this.targetObjectRef = ref;
-			if (targetObjectRef instanceof TargetObject) {
-				targetObject = (TargetObject) targetObjectRef;
-				if (!isLink) {
-					rebuildContainers(targetObject.getCachedElements(),
-						targetObject.getCachedAttributes());
-				}
-			}
-			else {
-				targetObject = null;
-				targetObjectRef.fetch().thenAccept(obj -> {
-					targetObject = obj;
-					if (obj != null && !isLink) {
-						rebuildContainers(targetObject.getCachedElements(),
-							targetObject.getCachedAttributes());
-					}
-				});
+		if (to != null) {
+			targetObject = to;
+			if (!isLink) {
+				rebuildContainers(targetObject.getCachedElements(),
+					targetObject.getCachedAttributes());
 			}
 			visible = visibleByDefault(getName());
 		}
@@ -96,14 +69,14 @@ public class ObjectContainer implements Comparable {
 	}
 
 	public String getName() {
-		if (targetObjectRef == null) {
+		if (targetObject == null) {
 			return "Objects";
 		}
 		if (isLink) {
 			return linkKey;
 		}
 		boolean noTarget = targetObject == null;
-		String name = noTarget ? targetObjectRef.getName() : targetObject.getName();
+		String name = noTarget ? targetObject.getName() : targetObject.getName();
 		String hint = noTarget ? null : targetObject.getTypeHint();
 		if (name == null) {
 			return hint;
@@ -112,11 +85,11 @@ public class ObjectContainer implements Comparable {
 	}
 
 	public String getDecoratedName() {
-		if (targetObjectRef == null) {
+		if (targetObject == null) {
 			return "Objects";
 		}
 		if (isLink) {
-			String refname = targetObjectRef.getName();
+			String refname = targetObject.getName();
 			if (linkKey.equals(refname)) {
 				return "->" + linkKey;
 			}
@@ -133,10 +106,10 @@ public class ObjectContainer implements Comparable {
 	}
 
 	public String getPrefixedName() {
-		if (targetObjectRef == null) {
+		if (targetObject == null) {
 			return "Objects";
 		}
-		List<String> path = targetObjectRef.getPath();
+		List<String> path = targetObject.getPath();
 		int index = path.size() - 1;
 		if (index < 0) {
 			return targetObject.getName();
@@ -153,10 +126,10 @@ public class ObjectContainer implements Comparable {
 	}
 
 	public String getShortName() {
-		if (targetObjectRef == null) {
+		if (targetObject == null) {
 			return "Objects";
 		}
-		return targetObject == null ? targetObjectRef.getName() : targetObject.getName();
+		return targetObject == null ? targetObject.getName() : targetObject.getName();
 	}
 
 	public ObjectContainer getParent() {
@@ -171,52 +144,40 @@ public class ObjectContainer implements Comparable {
 	 */
 
 	public CompletableFuture<ObjectContainer> getOffspring() {
-		if (targetObjectRef == null) {
-			return null;
+		if (targetObject == null) {
+			return CompletableFuture.completedFuture(null);
 		}
-		AtomicReference<TargetObject> to = new AtomicReference<>();
-		AtomicReference<Map<String, ? extends TargetObject>> elements = new AtomicReference<>();
-		AtomicReference<Map<String, ?>> attributes = new AtomicReference<>();
-		return sequence(TypeSpec.cls(ObjectContainer.class)).then(seq -> {
-			targetObjectRef.fetch().handle(seq::next);
-		}, to).then(seq -> {
-			targetObject = to.get();
-			AsyncFence fence = new AsyncFence();
-			fence.include(targetObject.fetchElements(true)
-					.thenCompose(DebugModelConventions::fetchAll)
-					.thenAccept(elements::set));
-			fence.include(targetObject.fetchAttributes(true)
-					.thenCompose(attrs -> DebugModelConventions.fetchObjAttrs(targetObject, attrs))
-					.thenAccept(attributes::set));
-			fence.ready().handle(seq::next);
-		}).then(seq -> {
-			rebuildContainers(elements.get(), attributes.get());
+		return targetObject.resync(true, true).thenApply(__ -> {
+			rebuildContainers(targetObject.getCachedElements(), targetObject.getCachedAttributes());
 			propagateProvider(provider);
-			seq.exit(this);
-		}).finish();
+			return this;
+		});
 	}
 
+	/*
 	protected void checkAutoRecord() {
 		if (targetObject != null && provider.isAutorecord()) {
-			TargetProcess<?> proc = DebugModelConventions.liveProcessOrNull(targetObject);
+			TargetProcess proc = DebugModelConventions.liveProcessOrNull(targetObject);
 			if (proc != null) {
-				provider.startRecording(proc, false).exceptionally(ex -> {
-					Msg.error("Could not record and/or open target: " + targetObject, ex);
-					return null;
-				});
+				provider.startRecording(proc, false);
 			}
-			// Note that the recorder seeds its own listener with its target
 		}
 	}
+	*/
 
 	public void augmentElements(Collection<String> elementsRemoved,
 			Map<String, ? extends TargetObject> elementsAdded) {
 		Set<ObjectContainer> result = new TreeSet<ObjectContainer>();
+		boolean structureChanged = false;
 		synchronized (elementMap) {
 			for (ObjectContainer child : currentChildren) {
 				String name = child.getName();
+				if (name.startsWith("[")) {
+					name = name.substring(1, name.length() - 1);
+				}
 				if (elementsRemoved.contains(name) && !elementsAdded.containsKey(name)) {
 					elementMap.remove(name);
+					structureChanged = true;
 					continue;
 				}
 				result.add(child);
@@ -224,12 +185,21 @@ public class ObjectContainer implements Comparable {
 			for (String key : elementsAdded.keySet()) {
 				TargetObject val = elementsAdded.get(key);
 				ObjectContainer child =
-					DebuggerObjectsProvider.buildContainerFromObject(targetObject, key, val, true);
+					DebuggerObjectsProvider.buildContainerFromObject(targetObject, key, val, false);
+				if (!elementMap.containsKey(key)) {
+					structureChanged = true;
+				}
+				else {
+					provider.signalDataChanged(child);
+				}
 				elementMap.put(key, val);
 				result.add(child);
 			}
 		}
 		currentChildren = result;
+		if (structureChanged) {
+			provider.signalContentsChanged(this);
+		}
 		provider.fireObjectUpdated(this);
 		//provider.update(this);
 	}
@@ -237,11 +207,13 @@ public class ObjectContainer implements Comparable {
 	public void augmentAttributes(Collection<String> attributesRemoved,
 			Map<String, ?> attributesAdded) {
 		Set<ObjectContainer> result = new TreeSet<ObjectContainer>();
+		boolean structureChanged = false;
 		synchronized (attributeMap) {
 			for (ObjectContainer child : currentChildren) {
 				String name = child.getName();
 				if (attributesRemoved.contains(name) && !attributesAdded.containsKey(name)) {
 					attributeMap.remove(name);
+					structureChanged = true;
 					continue;
 				}
 				result.add(child);
@@ -250,21 +222,27 @@ public class ObjectContainer implements Comparable {
 				Object val = attributesAdded.get(key);
 				ObjectContainer child =
 					DebuggerObjectsProvider.buildContainerFromObject(targetObject, key, val, true);
-				if (child == null) {
-					Msg.error(this, "Null container for " + key);
-				}
-				else {
+				if (child != null) {
+					if (!attributeMap.containsKey(key)) {
+						structureChanged = true;
+					}
+					else {
+						provider.signalDataChanged(child);
+					}
 					attributeMap.put(key, val);
 					result.add(child);
 				}
 			}
 		}
 		currentChildren = result;
+		if (structureChanged) {
+			provider.signalContentsChanged(this);
+		}
 		provider.fireObjectUpdated(this);
 		//provider.update(this);
 	}
 
-	public void rebuildContainers(Map<String, ? extends TargetObjectRef> elements,
+	public void rebuildContainers(Map<String, ? extends TargetObject> elements,
 			Map<String, ?> attributes) {
 		synchronized (elementMap) {
 			elementMap.clear();
@@ -319,7 +297,7 @@ public class ObjectContainer implements Comparable {
 		return attributeMap;
 	}
 
-	public Map<String, TargetObjectRef> getElementMap() {
+	public Map<String, TargetObject> getElementMap() {
 		return elementMap;
 	}
 
@@ -353,21 +331,17 @@ public class ObjectContainer implements Comparable {
 			this.provider = newProvider;
 			provider.addTargetToMap(this);
 		}
-		this.addListener(provider);
-		//if (targetObject != null && !currentChildren.isEmpty()) {
-		//	targetObject.addListener(provider);
-		//}
 		for (ObjectContainer c : currentChildren) {
 			c.propagateProvider(provider);
 		}
 		provider.fireObjectUpdated(this);
-		checkAutoRecord();
+		//checkAutoRecord();
 	}
 
 	// This should only be called once when the connection is activated
 	public void setTargetObject(TargetObject rootObject) {
 		this.targetObject = rootObject;
-		this.targetObjectRef = rootObject;
+		rebuildContainers(rootObject.getCachedElements(), rootObject.getCachedAttributes());
 		if (provider != null) {
 			provider.addTargetToMap(this);
 			provider.update(this);
@@ -511,14 +485,6 @@ public class ObjectContainer implements Comparable {
 		this.immutable = immutable;
 	}
 
-	public void addListener(ObjectContainerListener listener) {
-		listeners.add(listener);
-	}
-
-	public void removeListener(ObjectContainerListener listener) {
-		listeners.remove(listener);
-	}
-
 	public boolean isVisible() {
 		return visible;
 	}
@@ -538,18 +504,10 @@ public class ObjectContainer implements Comparable {
 
 	public void subscribe() {
 		isSubscribed = true;
-		if (targetObject != null && provider != null) {
-			targetObject.addListener(provider);
-			provider.addListener(targetObject);
-		}
 	}
 
 	public void unsubscribe() {
 		isSubscribed = false;
-		targetObject.removeListener(provider);
-		if (provider.isAutorecord()) {
-			//provider.stopRecording(targetObject);
-		}
 	}
 
 	public boolean isModified() {
@@ -587,8 +545,7 @@ public class ObjectContainer implements Comparable {
 	}
 
 	@Override
-	public int compareTo(Object obj) {
-		ObjectContainer that = (ObjectContainer) obj;
+	public int compareTo(ObjectContainer that) {
 		String thisTreePath = this.toString();
 		String thatTreePath = that.toString();
 		if (thisTreePath != null && thatTreePath != null) {

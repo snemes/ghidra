@@ -20,7 +20,7 @@ import java.util.concurrent.CompletableFuture;
 import agent.dbgeng.dbgeng.DebugSystemObjects;
 import agent.dbgeng.dbgeng.DebugThreadId;
 import agent.dbgeng.manager.*;
-import agent.dbgeng.manager.cmd.DbgThreadSelectCommand;
+import agent.dbgeng.manager.cmd.DbgSetActiveThreadCommand;
 import agent.dbgeng.manager.impl.*;
 import agent.dbgeng.model.iface1.*;
 import agent.dbgeng.model.impl.DbgModelTargetStackImpl;
@@ -28,10 +28,10 @@ import ghidra.dbg.target.TargetThread;
 import ghidra.dbg.util.PathUtils;
 
 public interface DbgModelTargetThread extends //
-		TargetThread<DbgModelTargetThread>, //
-		DbgModelTargetAccessConditioned<DbgModelTargetThread>, //
-		DbgModelTargetExecutionStateful<DbgModelTargetThread>, //
-		DbgModelTargetSteppable<DbgModelTargetThread>, //
+		TargetThread, //
+		DbgModelTargetAccessConditioned, //
+		DbgModelTargetExecutionStateful, //
+		DbgModelTargetSteppable, //
 		DbgEventsListenerAdapter, //
 		DbgModelSelectableObject {
 
@@ -55,13 +55,13 @@ public interface DbgModelTargetThread extends //
 		}
 	}
 
-	public void threadStateChanged(DbgState state, DbgReason reason);
+	public void threadStateChangedSpecific(DbgState state, DbgReason reason);
 
 	@Override
-	public default CompletableFuture<Void> select() {
+	public default CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
 		DbgThread thread = getThread();
-		return manager.execute(new DbgThreadSelectCommand(manager, thread, null));
+		return manager.execute(new DbgSetActiveThreadCommand(manager, thread, null));
 	}
 
 	public DbgModelTargetStackImpl getStack();

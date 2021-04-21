@@ -17,8 +17,11 @@ package agent.gdb.model.impl;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import agent.gdb.manager.impl.GdbMemoryMapping;
+import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
+import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.target.TargetMemoryRegion;
 import ghidra.dbg.target.TargetObject;
@@ -26,14 +29,15 @@ import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.*;
 
-@TargetObjectSchemaInfo(name = "MemoryRegion", elements = {
-	@TargetElementType(type = Void.class)
-}, attributes = {
-	@TargetAttributeType(type = Void.class)
-})
+@TargetObjectSchemaInfo(
+	name = "MemoryRegion",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(type = Void.class) })
 public class GdbModelTargetMemoryRegion
 		extends DefaultTargetObject<TargetObject, GdbModelTargetProcessMemory>
-		implements TargetMemoryRegion<GdbModelTargetMemoryRegion> {
+		implements TargetMemoryRegion {
 	protected static final String OBJFILE_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "objfile";
 	protected static final String OFFSET_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "offset";
 
@@ -62,6 +66,7 @@ public class GdbModelTargetMemoryRegion
 	public GdbModelTargetMemoryRegion(GdbModelTargetProcessMemory memory,
 			GdbMemoryMapping mapping) {
 		super(memory.impl, memory, keyRegion(mapping), "MemoryRegion");
+		memory.impl.addModelObject(mapping, this);
 		try {
 			Address min = memory.impl.getAddressFactory()
 					.getDefaultAddressSpace()
@@ -71,15 +76,15 @@ public class GdbModelTargetMemoryRegion
 		catch (AddressFormatException | AddressOverflowException e) {
 			throw new AssertionError(e);
 		}
-		changeAttributes(List.of(), Map.of(MEMORY_ATTRIBUTE_NAME, memory, //
+		changeAttributes(List.of(), Map.of( //
+			MEMORY_ATTRIBUTE_NAME, memory, //
 			RANGE_ATTRIBUTE_NAME, range, //
 			READABLE_ATTRIBUTE_NAME, isReadable(), //
 			WRITABLE_ATTRIBUTE_NAME, isWritable(), //
 			EXECUTABLE_ATTRIBUTE_NAME, isExecutable(), //
 			OBJFILE_ATTRIBUTE_NAME, objfile = mapping.getObjfile(), //
 			OFFSET_ATTRIBUTE_NAME, offset = mapping.getOffset().longValue(), //
-			DISPLAY_ATTRIBUTE_NAME, display = computeDisplay(mapping), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, display = computeDisplay(mapping) //
 		), "Initialized");
 	}
 
@@ -121,13 +126,26 @@ public class GdbModelTargetMemoryRegion
 		return true; // TODO
 	}
 
-	@TargetAttributeType(name = OBJFILE_ATTRIBUTE_NAME, required = true, fixed = true, hidden = true)
+	@TargetAttributeType(
+		name = OBJFILE_ATTRIBUTE_NAME,
+		required = true,
+		fixed = true,
+		hidden = true)
 	public String getObjfile() {
 		return objfile;
 	}
 
-	@TargetAttributeType(name = OFFSET_ATTRIBUTE_NAME, required = true, fixed = true, hidden = true)
+	@TargetAttributeType(
+		name = OFFSET_ATTRIBUTE_NAME,
+		required = true,
+		fixed = true,
+		hidden = true)
 	public long getOffset() {
 		return offset;
+	}
+
+	public CompletableFuture<Void> stateChanged(GdbStateChangeRecord sco) {
+		// Nothing to do here
+		return AsyncUtils.NIL;
 	}
 }

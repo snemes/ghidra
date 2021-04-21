@@ -25,21 +25,21 @@ import ghidra.dbg.jdi.model.iface1.JdiModelSelectableObject;
 import ghidra.dbg.jdi.model.iface1.JdiModelTargetConsole;
 import ghidra.dbg.target.TargetConsole;
 import ghidra.dbg.target.TargetExecutionStateful.TargetExecutionState;
-import ghidra.dbg.target.TargetInterpreter.TargetInterpreterListener;
 import ghidra.dbg.target.schema.*;
 import ghidra.lifecycle.Internal;
 import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "Process", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "state", type = TargetExecutionState.class, hidden = true), //
-	@TargetAttributeType(type = Void.class) //
-})
-public class JdiModelTargetProcess extends JdiModelTargetObjectImpl implements //
-		JdiModelTargetConsole<JdiModelTargetProcess>, //
-		JdiConsoleOutputListener, //
-		JdiModelSelectableObject {
+@TargetObjectSchemaInfo(
+	name = "Process",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(name = "state", type = TargetExecutionState.class, hidden = true),
+		@TargetAttributeType(type = Void.class)
+	})
+public class JdiModelTargetProcess extends JdiModelTargetObjectImpl
+		implements JdiModelTargetConsole, JdiConsoleOutputListener, JdiModelSelectableObject {
 
 	public static String getUniqueId(Process obj) {
 		return Long.toHexString(obj.pid());
@@ -67,8 +67,7 @@ public class JdiModelTargetProcess extends JdiModelTargetObjectImpl implements /
 
 		changeAttributes(List.of(), List.of(), Map.of( //
 			STATE_ATTRIBUTE_NAME, convertState(process.isAlive()), //
-			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			DISPLAY_ATTRIBUTE_NAME, getDisplay() //
 		), "Initialized");
 	}
 
@@ -90,7 +89,7 @@ public class JdiModelTargetProcess extends JdiModelTargetObjectImpl implements /
 
 	@Override
 	@Internal
-	public CompletableFuture<Void> select() {
+	public CompletableFuture<Void> setActive() {
 		return CompletableFuture.completedFuture(null);
 		///return thread.select();
 	}
@@ -107,7 +106,7 @@ public class JdiModelTargetProcess extends JdiModelTargetObjectImpl implements /
 			default:
 				throw new AssertionError();
 		}
-		listeners.fire(TargetInterpreterListener.class).consoleOutput(this, channel, out);
+		listeners.fire.consoleOutput(this, channel, out);
 	}
 
 	private void readStream(InputStream in, TargetConsole.Channel channel) {

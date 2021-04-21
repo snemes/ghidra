@@ -18,11 +18,9 @@ package ghidra.dbg.gadp.client;
 import java.util.concurrent.CompletableFuture;
 
 import ghidra.dbg.gadp.protocol.Gadp;
-import ghidra.dbg.gadp.util.GadpValueUtils;
 import ghidra.dbg.target.TargetDeletable;
 
-public interface GadpClientTargetDeletable
-		extends GadpClientTargetObject, TargetDeletable<GadpClientTargetDeletable> {
+public interface GadpClientTargetDeletable extends GadpClientTargetObject, TargetDeletable {
 	@Override
 	default CompletableFuture<Void> delete() {
 		getDelegate().assertValid();

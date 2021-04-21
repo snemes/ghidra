@@ -27,7 +27,7 @@
 vector<ArchitectureCapability *> ArchitectureCapability::thelist;
 
 const uint4 ArchitectureCapability::majorversion = 4;
-const uint4 ArchitectureCapability::minorversion = 0;
+const uint4 ArchitectureCapability::minorversion = 1;
 
 /// This builds a list of just the ArchitectureCapability extensions
 void ArchitectureCapability::initialize(void)
@@ -60,6 +60,20 @@ ArchitectureCapability *ArchitectureCapability::findCapability(Document *doc)
     ArchitectureCapability *capa = thelist[i];
     if (capa->isXmlMatch(doc))
       return capa;
+  }
+  return (ArchitectureCapability *)0;
+}
+
+/// Return the ArchitectureCapability object with the matching name
+/// \param name is the name to match
+/// \return the ArchitectureCapability or null if no match is found
+ArchitectureCapability *ArchitectureCapability::getCapability(const string &name)
+
+{
+  for(int4 i=0;i<thelist.size();++i) {
+    ArchitectureCapability *res = thelist[i];
+    if (res->getName() == name)
+      return res;
   }
   return (ArchitectureCapability *)0;
 }

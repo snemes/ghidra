@@ -83,12 +83,12 @@ public interface DbgEventsListenerAdapter extends DbgEventsListener {
 	}
 
 	@Override
-	public default void moduleLoaded(DbgProcess process, String name, DbgCause cause) {
+	public default void moduleLoaded(DbgProcess process, DebugModuleInfo info, DbgCause cause) {
 		// Extension point
 	}
 
 	@Override
-	public default void moduleUnloaded(DbgProcess process, String name, DbgCause cause) {
+	public default void moduleUnloaded(DbgProcess process, DebugModuleInfo info, DbgCause cause) {
 		// Extension point
 	}
 
@@ -142,4 +142,10 @@ public interface DbgEventsListenerAdapter extends DbgEventsListener {
 	public default void consoleOutput(String output, int mask) {
 		// Extension point
 	}
+
+	@Override
+	public default void promptChanged(String prompt) {
+		// Extension point
+	}
+
 }

@@ -25,17 +25,13 @@ import com.sun.jdi.connect.Connector.Argument;
 
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.DebugModelConventions;
-import ghidra.dbg.agent.AbstractTargetObject;
 import ghidra.dbg.agent.DefaultTargetModelRoot;
-import ghidra.dbg.attributes.TargetObjectRef;
-import ghidra.dbg.error.DebuggerIllegalArgumentException;
 import ghidra.dbg.jdi.manager.*;
 import ghidra.dbg.jdi.model.iface1.*;
 import ghidra.dbg.jdi.model.iface2.JdiModelTargetObject;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
 import ghidra.dbg.target.schema.*;
-import ghidra.dbg.util.PathUtils;
 import ghidra.util.Msg;
 
 /**
@@ -48,23 +44,38 @@ import ghidra.util.Msg;
  * {@link DebugModelConventions#findSuitable(Class, TargetObject)} requires a unique answer. That
  * would mean neither attach nor launch will be enabled anywhere except on a connector....
  */
-@TargetObjectSchemaInfo(name = "Debugger", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "Attributes", type = JdiModelTargetAttributesContainer.class, required = true, fixed = true), //
-	@TargetAttributeType(name = "Connectors", type = JdiModelTargetConnectorContainer.class, required = true, fixed = true), //
-	@TargetAttributeType(name = "VirtualMachines", type = JdiModelTargetVMContainer.class, required = true, fixed = true), //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(
+	name = "Debugger",
+	elements = {
+		@TargetElementType(type = Void.class)
+	},
+	attributes = {
+		@TargetAttributeType(
+			name = "Attributes",
+			type = JdiModelTargetAttributesContainer.class,
+			required = true,
+			fixed = true),
+		@TargetAttributeType(
+			name = "Connectors",
+			type = JdiModelTargetConnectorContainer.class,
+			required = true,
+			fixed = true),
+		@TargetAttributeType(
+			name = "VirtualMachines",
+			type = JdiModelTargetVMContainer.class,
+			required = true,
+			fixed = true),
+		@TargetAttributeType(type = Void.class)
+	})
 public class JdiModelTargetRoot extends DefaultTargetModelRoot implements // 
-		JdiModelTargetAccessConditioned<JdiModelTargetRoot>, //
-		//JdiModelTargetAttacher<JdiModelTargetRoot>, //
-		JdiModelTargetFocusScope<JdiModelTargetRoot>, //
-		//TargetFocusScope<JdiModelTargetRoot>, //
-		//JdiModelTargetInterpreter<JdiModelTargetRoot>, //
-		JdiModelTargetInterruptible<JdiModelTargetRoot>, //
-		JdiModelTargetLauncher<JdiModelTargetRoot>, //
-		JdiModelTargetEventScope<JdiModelTargetRoot>, //
+		JdiModelTargetAccessConditioned, //
+		//JdiModelTargetAttacher, //
+		JdiModelTargetFocusScope, //
+		//TargetFocusScope, //
+		//JdiModelTargetInterpreter, //
+		JdiModelTargetInterruptible, //
+		JdiModelTargetLauncher, //
+		JdiModelTargetEventScope, //
 		JdiEventsListenerAdapter {
 	protected static final String JDB_PROMPT = ">";
 
@@ -76,7 +87,7 @@ public class JdiModelTargetRoot extends DefaultTargetModelRoot implements //
 	protected final JdiModelTargetConnectorContainer connectors;
 	protected JdiModelTargetAttributesContainer addedAttributes;
 
-	private TargetAccessibility accessibility = TargetAccessibility.ACCESSIBLE;
+	private boolean accessible = true;
 	protected JdiModelSelectableObject focus;
 
 	protected String debugger = "Jdi"; // Used by JdiModelTargetEnvironment
@@ -96,10 +107,9 @@ public class JdiModelTargetRoot extends DefaultTargetModelRoot implements //
 			connectors, //
 			addedAttributes //
 		), Map.of( //
-			ACCESSIBLE_ATTRIBUTE_NAME, accessibility == TargetAccessibility.ACCESSIBLE, //
+			ACCESSIBLE_ATTRIBUTE_NAME, accessible, //
 			DISPLAY_ATTRIBUTE_NAME, display, //
-			TargetMethod.PARAMETERS_ATTRIBUTE_NAME, TargetCmdLineLauncher.PARAMETERS, //
-			UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
+			TargetMethod.PARAMETERS_ATTRIBUTE_NAME, TargetCmdLineLauncher.PARAMETERS //
 		), "Initialized");
 
 		impl.getManager().addEventsListener(null, this);
@@ -163,22 +173,21 @@ public class JdiModelTargetRoot extends DefaultTargetModelRoot implements //
 		setFocus(f);
 	}
 
-	public void setAccessibility(TargetAccessibility accessibility) {
+	public void setAccessible(boolean accessible) {
 		synchronized (attributes) {
-			if (this.accessibility == accessibility) {
+			if (this.accessible == accessible) {
 				return;
 			}
-			this.accessibility = accessibility;
+			this.accessible = accessible;
 			changeAttributes(List.of(), List.of(), Map.of( //
-				ACCESSIBLE_ATTRIBUTE_NAME, accessibility == TargetAccessibility.ACCESSIBLE //
+				ACCESSIBLE_ATTRIBUTE_NAME, accessible //
 			), "Accessibility changed");
 		}
-		listeners.fire(TargetAccessibilityListener.class).accessibilityChanged(this, accessibility);
 	}
 
 	@Override
-	public TargetAccessibility getAccessibility() {
-		return accessibility;
+	public boolean isAccessible() {
+		return accessible;
 	}
 
 	@Override
@@ -238,34 +247,6 @@ public class JdiModelTargetRoot extends DefaultTargetModelRoot implements //
 		return AsyncUtils.NIL;
 	}
 
-	@Override
-	public CompletableFuture<Void> requestFocus(TargetObjectRef ref) {
-		impl.assertMine(TargetObjectRef.class, ref);
-		/**
-		 * Yes, this is pointless, since I'm the root, but do it right (TM), since this may change
-		 * or be used as an example for other implementations.
-		 */
-		if (!PathUtils.isAncestor(this.getPath(), ref.getPath())) {
-			throw new DebuggerIllegalArgumentException("Can only focus a successor of the scope");
-		}
-		return ref.fetch().thenCompose(obj -> {
-			TargetObject cur = obj;
-			while (cur != null) {
-				if (cur instanceof JdiModelSelectableObject) {
-					JdiModelSelectableObject sel = (JdiModelSelectableObject) cur;
-					return sel.select();
-				}
-				if (cur instanceof AbstractTargetObject) {
-					AbstractTargetObject<?> def = (AbstractTargetObject<?>) cur;
-					cur = def.getImplParent();
-					continue;
-				}
-				throw new AssertionError();
-			}
-			return AsyncUtils.NIL;
-		});
-	}
-
 	protected void invalidateMemoryAndRegisterCaches() {
 		vms.invalidateMemoryAndRegisterCaches();
 	}
@@ -281,7 +262,6 @@ public class JdiModelTargetRoot extends DefaultTargetModelRoot implements //
 			changeAttributes(List.of(), List.of(), Map.of( //
 				FOCUS_ATTRIBUTE_NAME, focus //
 			), "Focus changed");
-			listeners.fire(TargetFocusScopeListener.class).focusChanged(this, sel);
 			return true;
 		}
 		return false;

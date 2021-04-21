@@ -16,6 +16,7 @@
 package ghidra.app.plugin.core.debug.gui.interpreters;
 
 import java.io.*;
+import java.lang.invoke.MethodHandles;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -28,13 +29,14 @@ import docking.action.ToggleDockingAction;
 import ghidra.app.plugin.core.console.CodeCompletion;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources;
 import ghidra.app.plugin.core.debug.gui.DebuggerResources.PinInterpreterAction;
+import ghidra.app.plugin.core.interpreter.InterpreterComponentProvider;
 import ghidra.app.plugin.core.interpreter.InterpreterConsole;
+import ghidra.dbg.AnnotatedDebuggerAttributeListener;
 import ghidra.dbg.target.TargetConsole.Channel;
-import ghidra.dbg.target.TargetConsole.TargetConsoleListener;
 import ghidra.dbg.target.TargetInterpreter;
-import ghidra.dbg.target.TargetInterpreter.TargetInterpreterListener;
 import ghidra.dbg.target.TargetObject;
 import ghidra.util.Msg;
+import ghidra.util.Swing;
 
 public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetObject>
 		implements DebuggerInterpreterConnection {
@@ -43,54 +45,75 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 	 * We inherit console text output from interpreter listener, even though we may be listening to
 	 * a plain console.
 	 */
-	protected class ForInterpreterListener implements TargetInterpreterListener {
+	protected class ForInterpreterListener extends AnnotatedDebuggerAttributeListener {
+		public ForInterpreterListener() {
+			super(MethodHandles.lookup());
+		}
+
 		@Override
-		public void consoleOutput(TargetObject console, Channel channel, String out) {
-			// NB: yes, this is lame... The InterpreterPanel's repositionScrollPane
-			//  method substracts 1 from the text length to compute the new position
-			//  causing it to scroll to the last character printed.  We want it to scroll
-			//  to the next line, so...
-			out += " ";
+		public void consoleOutput(TargetObject console, Channel channel, byte[] out) {
+			OutputStream os;
 			switch (channel) {
 				case STDOUT:
-					if (outWriter == null) {
-						return;
-					}
-					outWriter.print(out);
-					outWriter.flush();
+					os = stdOut;
 					break;
 				case STDERR:
-					if (errWriter == null) {
-						return;
-					}
-					errWriter.print(out);
-					errWriter.flush();
+					os = stdErr;
 					break;
+				default:
+					throw new AssertionError();
+			}
+			// It's possible stdOut/Err was not initialized, yet
+			if (os == null) {
+				return;
+			}
+			/**
+			 * NB: yes, the extra space is lame... The InterpreterPanel's repositionScrollPane
+			 * method subtracts 1 from the text length to compute the new position causing it to
+			 * scroll to the last character printed. We want it to scroll to the next line, so...
+			 */
+			try {
+				os.write(out);
+				os.write(' ');
+			}
+			catch (IOException e) {
+				Msg.error(this, "Cannot write to interpreter window: ", e);
 			}
 		}
 
-		@Override
+		@AttributeCallback(TargetObject.DISPLAY_ATTRIBUTE_NAME)
 		public void displayChanged(TargetObject object, String display) {
-			// TODO: Would rather update the sub-title
-			guiConsole.updateTitle();
-		}
-
-		@Override
-		public void promptChanged(TargetInterpreter<?> i, String prompt) {
-			guiConsole.setPrompt(prompt);
-		}
-
-		@Override
-		public void invalidated(TargetObject object, String reason) {
-			if (object == targetConsole) { // Redundant
-				if (pinned) {
-					running.set(false);
-					plugin.disableConsole(targetConsole, guiConsole);
-				}
-				else {
-					plugin.destroyConsole(targetConsole, guiConsole);
-				}
+			// TODO: Add setSubTitle(String) to InterpreterConsole
+			if (guiConsole == null) {
+				/**
+				 * Can happen during init. setSubTitle will get called immediately after guiConsole
+				 * is initialized.
+				 */
+				return;
 			}
+			InterpreterComponentProvider provider = (InterpreterComponentProvider) guiConsole;
+			Swing.runLater(() -> provider.setSubTitle(display));
+		}
+
+		@AttributeCallback(TargetInterpreter.PROMPT_ATTRIBUTE_NAME)
+		public void promptChanged(TargetObject interpreter, String prompt) {
+			if (guiConsole == null) {
+				/**
+				 * Can happen during init. setPrompt will get called immediately after guiConsole is
+				 * initialized. NB. It happens in DebuggerWrappedInterpreterConnection
+				 */
+				return;
+			}
+			Swing.runLater(() -> guiConsole.setPrompt(prompt));
+		}
+
+		@Override
+		public void invalidated(TargetObject object, TargetObject branch, String reason) {
+			Swing.runLater(() -> {
+				if (object == targetConsole) { // Redundant
+					consoleInvalidated();
+				}
+			});
 		}
 	}
 
@@ -98,18 +121,15 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 	protected final T targetConsole;
 
 	protected final AtomicBoolean running = new AtomicBoolean(false);
-	protected final TargetConsoleListener listener = new ForInterpreterListener();
+	protected final ForInterpreterListener listener = new ForInterpreterListener();
 	protected Thread thread;
 	protected InterpreterConsole guiConsole;
 	protected BufferedReader inReader;
-	protected PrintWriter outWriter;
-	protected PrintWriter errWriter;
+	protected OutputStream stdOut;
+	protected OutputStream stdErr;
 
 	protected ToggleDockingAction actionPin;
 	protected boolean pinned = false;
-
-	// TODO: Fix InterpreterPanelService to take plugin name instead of just using title
-	protected boolean firstTimeAskedTitle = true;
 
 	public AbstractDebuggerWrappedConsoleConnection(DebuggerInterpreterPlugin plugin,
 			T targetConsole) {
@@ -122,12 +142,7 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 
 	@Override
 	public String getTitle() {
-		// This is kruft. Would be better to have control of the sub-title.
-		if (firstTimeAskedTitle) {
-			firstTimeAskedTitle = false;
-			return plugin.getName();
-		}
-		return targetConsole.getDisplay();
+		return DebuggerResources.TITLE_PROVIDER_INTERPRETER;
 	}
 
 	@Override
@@ -145,11 +160,29 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 	public void setConsole(InterpreterConsole guiConsole) {
 		assert this.guiConsole == null;
 		this.guiConsole = guiConsole;
-		setErrWriter(guiConsole.getErrWriter());
-		setOutWriter(guiConsole.getOutWriter());
+
+		InterpreterComponentProvider provider = (InterpreterComponentProvider) guiConsole;
+		provider.setSubTitle(targetConsole.getDisplay());
+
+		setStdErr(guiConsole.getStdErr());
+		setStdOut(guiConsole.getStdOut());
 		setStdIn(guiConsole.getStdin());
 
 		createActions();
+
+		if (!targetConsole.isValid()) {
+			consoleInvalidated();
+		}
+	}
+
+	protected void consoleInvalidated() {
+		if (pinned) {
+			running.set(false);
+			plugin.disableConsole(targetConsole, guiConsole);
+		}
+		else {
+			plugin.destroyConsole(targetConsole, guiConsole);
+		}
 	}
 
 	protected void createActions() {
@@ -160,12 +193,12 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 		guiConsole.addAction(actionPin);
 	}
 
-	public void setOutWriter(PrintWriter outWriter) {
-		this.outWriter = outWriter;
+	public void setStdOut(OutputStream stdOut) {
+		this.stdOut = stdOut;
 	}
 
-	public void setErrWriter(PrintWriter errWriter) {
-		this.errWriter = errWriter;
+	public void setStdErr(OutputStream stdErr) {
+		this.stdErr = stdErr;
 	}
 
 	public void setStdIn(InputStream stdIn) {
@@ -186,7 +219,7 @@ public abstract class AbstractDebuggerWrappedConsoleConnection<T extends TargetO
 		try {
 			while (running.get()) {
 				String line = inReader.readLine();
-				if (!running.get()) {
+				if (line == null || !running.get()) {
 					return;
 				}
 				sendLine(line).exceptionally(e -> {

@@ -22,30 +22,27 @@ import java.util.stream.Collectors;
 import agent.gdb.manager.GdbInferior;
 import agent.gdb.manager.GdbModule;
 import ghidra.async.AsyncFence;
-import ghidra.async.AsyncUtils;
 import ghidra.dbg.agent.DefaultTargetObject;
 import ghidra.dbg.error.DebuggerUserException;
-import ghidra.dbg.target.TargetModule;
-import ghidra.dbg.target.TargetModuleContainer;
+import ghidra.dbg.target.*;
 import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchema.ResyncMode;
 import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
 import ghidra.lifecycle.Internal;
-import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "ModuleContainer", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "ModuleContainer",
+	elementResync = ResyncMode.ONCE, // TODO: Should this be NEVER?
+	attributes = { @TargetAttributeType(type = Void.class) },
+	canonicalContainer = true)
 public class GdbModelTargetModuleContainer
 		extends DefaultTargetObject<GdbModelTargetModule, GdbModelTargetInferior>
-		implements TargetModuleContainer<GdbModelTargetModuleContainer> {
+		implements TargetModuleContainer {
 	// NOTE: -file-list-shared-libraries omits the main module and system-supplied DSO.
 	public static final String NAME = "Modules";
 
 	protected final GdbModelImpl impl;
 	protected final GdbInferior inferior;
-
-	// TODO: Is it possible to load the same object twice?
-	protected final Map<String, GdbModelTargetModule> modulesByName = new HashMap<>();
 
 	public GdbModelTargetModuleContainer(GdbModelTargetInferior inferior) {
 		super(inferior.impl, inferior, NAME, "ModuleContainer");
@@ -64,7 +61,7 @@ public class GdbModelTargetModuleContainer
 	@Internal
 	public void libraryUnloaded(String name) {
 		synchronized (this) {
-			modulesByName.remove(name);
+			impl.deleteModelObject(name);
 		}
 		changeElements(List.of(name), List.of(), "Unloaded");
 	}
@@ -75,24 +72,29 @@ public class GdbModelTargetModuleContainer
 	}
 
 	@Override
-	public CompletableFuture<? extends TargetModule<?>> addSyntheticModule(String name) {
+	public CompletableFuture<? extends TargetModule> addSyntheticModule(String name) {
 		throw new DebuggerUserException("GDB Does not support synthetic modules");
 	}
 
 	protected CompletableFuture<Void> updateUsingModules(Map<String, GdbModule> byName) {
 		List<GdbModelTargetModule> modules;
 		synchronized (this) {
-			modules = byName.values()
-					.stream()
-					.map(this::getTargetModule)
-					.collect(Collectors.toList());
+			modules =
+				byName.values().stream().map(this::getTargetModule).collect(Collectors.toList());
 		}
 		AsyncFence fence = new AsyncFence();
 		for (GdbModelTargetModule mod : modules) {
 			fence.include(mod.init());
 		}
+
+		/**
+		 * NB. Modules may have changed by the time the fence completes. We'll just remove invalid
+		 * modules, since any additions should cause a follow-on update.
+		 */
 		return fence.ready().thenAccept(__ -> {
-			changeElements(List.of(), modules, "Refreshed");
+			List<GdbModelTargetModule> validOnly =
+				modules.stream().filter(m -> m.isValid()).collect(Collectors.toList());
+			changeElements(List.of(), validOnly, "Refreshed");
 		});
 	}
 
@@ -104,26 +106,30 @@ public class GdbModelTargetModuleContainer
 
 	protected CompletableFuture<Void> doRefresh() {
 		return inferior.listModules().thenCompose(byName -> {
-			modulesByName.keySet().retainAll(byName.keySet());
+			for (String modName : inferior.getKnownModules().keySet()) {
+				if (!byName.keySet().contains(modName)) {
+					impl.deleteModelObject(byName.get(modName));
+				}
+			}
 			return updateUsingModules(byName);
 		});
 	}
 
 	protected synchronized GdbModelTargetModule getTargetModule(GdbModule module) {
-		return modulesByName.computeIfAbsent(module.getName(),
-			n -> new GdbModelTargetModule(this, module));
+		TargetObject modelObject = impl.getModelObject(module);
+		if (modelObject != null) {
+			return (GdbModelTargetModule) modelObject;
+		}
+		return new GdbModelTargetModule(this, module);
 	}
 
 	public synchronized GdbModelTargetModule getTargetModuleIfPresent(String name) {
-		return modulesByName.get(name);
+		return (GdbModelTargetModule) impl.getModelObject(name);
 	}
 
-	public CompletableFuture<?> refresh() {
-		if (!isObserved()) {
-			return AsyncUtils.NIL;
-		}
+	public CompletableFuture<?> refreshInternal() {
 		return doRefresh().exceptionally(ex -> {
-			Msg.error(this, "Problem refreshing inferior's modules", ex);
+			impl.reportError(this, "Problem refreshing inferior's modules", ex);
 			return null;
 		});
 	}

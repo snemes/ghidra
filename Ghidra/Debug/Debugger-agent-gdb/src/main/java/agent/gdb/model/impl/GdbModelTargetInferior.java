@@ -18,39 +18,30 @@ package agent.gdb.model.impl;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 
-import agent.gdb.manager.GdbInferior;
+import agent.gdb.manager.*;
 import agent.gdb.manager.GdbManager.ExecSuffix;
+import agent.gdb.manager.impl.cmd.GdbStateChangeRecord;
+import agent.gdb.manager.reason.*;
 import ghidra.async.AsyncFence;
 import ghidra.dbg.agent.DefaultTargetObject;
-import ghidra.dbg.attributes.TargetObjectRef;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
-import ghidra.dbg.error.DebuggerModelNoSuchPathException;
-import ghidra.dbg.error.DebuggerModelTypeException;
 import ghidra.dbg.target.*;
+import ghidra.dbg.target.TargetEventScope.TargetEventType;
 import ghidra.dbg.target.TargetLauncher.TargetCmdLineLauncher;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 import ghidra.lifecycle.Internal;
-import ghidra.util.Msg;
 
-@TargetObjectSchemaInfo(name = "Inferior", elements = {
-	@TargetElementType(type = Void.class)
-}, attributes = {
-	@TargetAttributeType(type = Void.class)
-})
+@TargetObjectSchemaInfo(
+	name = "Inferior",
+	elements = {
+		@TargetElementType(type = Void.class) },
+	attributes = {
+		@TargetAttributeType(type = Void.class) })
 public class GdbModelTargetInferior
-		extends DefaultTargetObject<TargetObject, GdbModelTargetInferiorContainer> implements //
-		TargetProcess<GdbModelTargetInferior>,  //
-		TargetAggregate, //
-		TargetExecutionStateful<GdbModelTargetInferior>, //
-		TargetAttacher<GdbModelTargetInferior>, //
-		TargetDeletable<GdbModelTargetInferior>, //
-		TargetDetachable<GdbModelTargetInferior>, //
-		TargetKillable<GdbModelTargetInferior>, //
-		TargetCmdLineLauncher<GdbModelTargetInferior>, //
-		TargetResumable<GdbModelTargetInferior>, //
-		TargetSteppable<GdbModelTargetInferior>, //
-		GdbModelSelectableObject {
+		extends DefaultTargetObject<TargetObject, GdbModelTargetInferiorContainer>
+		implements TargetProcess, TargetAggregate, TargetExecutionStateful, TargetAttacher,
+		TargetDeletable, TargetDetachable, TargetKillable, TargetCmdLineLauncher, TargetResumable,
+		TargetSteppable, GdbModelSelectableObject {
 
 	public static final String EXIT_CODE_ATTRIBUTE_NAME = PREFIX_INVISIBLE + "exit_code";
 
@@ -71,41 +62,55 @@ public class GdbModelTargetInferior
 
 	protected final GdbModelImpl impl;
 	protected final GdbInferior inferior;
+
 	protected String display;
+	protected TargetExecutionState state;
+	/**
+	 * When state=INACTIVE/TERMINATED, and we're waiting on a refresh, this keep the "real" state,
+	 * which is the last state actually reported by *running or *stopped.
+	 */
+	protected TargetExecutionState realState;
 
 	protected final GdbModelTargetEnvironment environment;
 	protected final GdbModelTargetProcessMemory memory;
 	protected final GdbModelTargetModuleContainer modules;
-	protected final GdbModelTargetRegisterContainer registers;
+	//protected final GdbModelTargetRegisterContainer registers;
 	protected final GdbModelTargetThreadContainer threads;
+	protected final GdbModelTargetBreakpointLocationContainer breakpoints;
 
 	protected Long exitCode;
+	private Integer base = 10;
 
 	public GdbModelTargetInferior(GdbModelTargetInferiorContainer inferiors, GdbInferior inferior) {
 		super(inferiors.impl, inferiors, keyInferior(inferior), "Inferior");
 		this.impl = inferiors.impl;
 		this.inferior = inferior;
+		impl.addModelObject(inferior, this);
+		impl.addModelObject(inferior.getId(), this);
 
 		this.environment = new GdbModelTargetEnvironment(this);
 		this.memory = new GdbModelTargetProcessMemory(this);
 		this.modules = new GdbModelTargetModuleContainer(this);
-		this.registers = new GdbModelTargetRegisterContainer(this);
+		//this.registers = new GdbModelTargetRegisterContainer(this);
 		this.threads = new GdbModelTargetThreadContainer(this);
+		this.breakpoints = new GdbModelTargetBreakpointLocationContainer(this);
 
-		changeAttributes(List.of(),
-			List.of(
-				environment,
-				memory,
-				modules,
-				registers,
-				threads),
-			Map.of(
-				STATE_ATTRIBUTE_NAME, TargetExecutionState.INACTIVE,
-				DISPLAY_ATTRIBUTE_NAME, updateDisplay(),
-				TargetMethod.PARAMETERS_ATTRIBUTE_NAME, TargetCmdLineLauncher.PARAMETERS,
-				UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED,
-				SUPPORTED_ATTACH_KINDS_ATTRIBUTE_NAME, SUPPORTED_KINDS,
-				SUPPORTED_STEP_KINDS_ATTRIBUTE_NAME, GdbModelTargetThread.SUPPORTED_KINDS),
+		this.realState = TargetExecutionState.INACTIVE;
+
+		changeAttributes(List.of(), //
+			List.of( //
+				environment, //
+				memory, //
+				modules, //
+				//registers, //
+				threads, //
+				breakpoints), //
+			Map.of( //
+				STATE_ATTRIBUTE_NAME, state = realState, //
+				DISPLAY_ATTRIBUTE_NAME, updateDisplay(), //
+				TargetMethod.PARAMETERS_ATTRIBUTE_NAME, TargetCmdLineLauncher.PARAMETERS, //
+				SUPPORTED_ATTACH_KINDS_ATTRIBUTE_NAME, SUPPORTED_KINDS, //
+				SUPPORTED_STEP_KINDS_ATTRIBUTE_NAME, GdbModelTargetThread.SUPPORTED_KINDS), //
 			"Initialized");
 	}
 
@@ -124,24 +129,35 @@ public class GdbModelTargetInferior
 		return modules;
 	}
 
+	/*
 	@TargetAttributeType(name = GdbModelTargetRegisterContainer.NAME, required = true, fixed = true)
 	public GdbModelTargetRegisterContainer getRegisters() {
 		return registers;
 	}
+	*/
 
 	@TargetAttributeType(name = GdbModelTargetThreadContainer.NAME, required = true, fixed = true)
 	public GdbModelTargetThreadContainer getThreads() {
 		return threads;
 	}
 
+	@TargetAttributeType(
+		name = GdbModelTargetBreakpointLocationContainer.NAME,
+		required = true,
+		fixed = true)
+	public GdbModelTargetBreakpointLocationContainer getBreakpoints() {
+		return breakpoints;
+	}
+
 	@Override
 	public CompletableFuture<Void> launch(List<String> args) {
-		return GdbModelImplUtils.launch(impl, inferior, args);
+		return impl
+				.gateFuture(GdbModelImplUtils.launch(impl, inferior, args).thenApply(__ -> null));
 	}
 
 	@Override
 	public CompletableFuture<Void> resume() {
-		return inferior.cont();
+		return impl.gateFuture(inferior.cont());
 	}
 
 	protected ExecSuffix convertToGdb(TargetStepKind kind) {
@@ -160,6 +176,8 @@ public class GdbModelTargetInferior
 				return ExecSuffix.RETURN;
 			case UNTIL:
 				return ExecSuffix.UNTIL;
+			case EXTENDED:
+				return ExecSuffix.EXTENDED;
 			default:
 				throw new AssertionError();
 		}
@@ -172,71 +190,68 @@ public class GdbModelTargetInferior
 				throw new UnsupportedOperationException(kind.name());
 			case ADVANCE: // Why no exec-advance in GDB/MI?
 				// TODO: This doesn't work, since advance requires a parameter
-				return inferior.console("advance");
+				return model.gateFuture(inferior.console("advance"));
 			default:
-				return inferior.step(convertToGdb(kind));
+				return model.gateFuture(inferior.step(convertToGdb(kind)));
 		}
 	}
 
 	@Override
 	public CompletableFuture<Void> kill() {
-		return inferior.kill();
+		return model.gateFuture(inferior.kill());
 	}
 
 	@Override
-	public CompletableFuture<Void> attach(TypedTargetObjectRef<? extends TargetAttachable<?>> ref) {
-		impl.assertMine(TargetObjectRef.class, ref);
-		// NOTE: These can change at any time. Just use the path to derive the target PID
-		if (!Objects.equals(PathUtils.parent(ref.getPath()), impl.session.available.getPath())) {
-			throw new DebuggerModelTypeException(
-				"Target of attach must be a child of " + impl.session.available.getPath());
-		}
-		long pid;
-		try {
-			pid = Long.parseLong(ref.getIndex());
-		}
-		catch (IllegalArgumentException e) {
-			throw new DebuggerModelNoSuchPathException("Badly-formatted PID", e);
-		}
-		return attach(pid);
+	public CompletableFuture<Void> attach(TargetAttachable attachable) {
+		GdbModelTargetAttachable mine = impl.assertMine(GdbModelTargetAttachable.class, attachable);
+		return attach(mine.pid);
 	}
 
 	@Override
 	public CompletableFuture<Void> attach(long pid) {
-		return inferior.attach(pid).thenApply(__ -> null);
+		return model.gateFuture(inferior.attach(pid)).thenApply(__ -> null);
 	}
 
 	@Override
 	public CompletableFuture<Void> detach() {
-		return inferior.detach();
+		return model.gateFuture(inferior.detach());
 	}
 
 	@Override
 	public CompletableFuture<Void> delete() {
-		return inferior.remove();
+		return model.gateFuture(inferior.remove());
 	}
 
 	protected CompletableFuture<Void> inferiorStarted(Long pid) {
+		parent.getListeners().fire.event(parent, null, TargetEventType.PROCESS_CREATED,
+			"Inferior " + inferior.getId() + " started " + inferior.getExecutable() + " pid=" + pid,
+			List.of(this));
 		AsyncFence fence = new AsyncFence();
-		fence.include(modules.refresh());
-		fence.include(registers.refresh());
-		fence.include(environment.refresh());
+		fence.include(modules.refreshInternal());
+		//fence.include(registers.refreshInternal());
+		fence.include(environment.refreshInternal());
+		fence.include(impl.gdb.listInferiors()); // HACK to update inferior.getExecutable()
 		return fence.ready().thenAccept(__ -> {
-			if (pid != null) {
-				changeAttributes(List.of(), Map.of( //
-					STATE_ATTRIBUTE_NAME, TargetExecutionState.ALIVE, //
-					PID_ATTRIBUTE_NAME, pid, //
-					DISPLAY_ATTRIBUTE_NAME, updateDisplay() //
-				), "Started");
+			// NB. Hack also updates inferior.getPid()
+			Long p = pid;
+			if (p == null) {
+				// Might have become null if it quickly terminates
+				// Also, we should save it before waiting on the refresh
+				p = inferior.getPid();
+			}
+			if (p == null) {
+				changeAttributes(List.of(), Map.ofEntries(
+					Map.entry(STATE_ATTRIBUTE_NAME, state = realState),
+					Map.entry(DISPLAY_ATTRIBUTE_NAME, updateDisplay())),
+					"Refresh on started");
 			}
 			else {
-				changeAttributes(List.of(), Map.of( //
-					STATE_ATTRIBUTE_NAME, TargetExecutionState.ALIVE, //
-					DISPLAY_ATTRIBUTE_NAME, updateDisplay() //
-				), "Started");
+				changeAttributes(List.of(), Map.ofEntries(
+					Map.entry(STATE_ATTRIBUTE_NAME, state = realState),
+					Map.entry(PID_ATTRIBUTE_NAME, p),
+					Map.entry(DISPLAY_ATTRIBUTE_NAME, updateDisplay())),
+					"Refresh on started");
 			}
-			listeners.fire(TargetExecutionStateListener.class)
-					.executionStateChanged(this, TargetExecutionState.ALIVE);
 		});
 	}
 
@@ -244,19 +259,83 @@ public class GdbModelTargetInferior
 		this.exitCode = exitCode;
 		if (exitCode != null) {
 			changeAttributes(List.of(), Map.of( //
-				STATE_ATTRIBUTE_NAME, TargetExecutionState.TERMINATED, //
+				STATE_ATTRIBUTE_NAME, state = realState = TargetExecutionState.TERMINATED, //
 				EXIT_CODE_ATTRIBUTE_NAME, exitCode, //
 				DISPLAY_ATTRIBUTE_NAME, updateDisplay() //
 			), "Exited");
 		}
 		else {
 			changeAttributes(List.of(), Map.of( //
-				STATE_ATTRIBUTE_NAME, TargetExecutionState.TERMINATED, //
+				STATE_ATTRIBUTE_NAME, state = realState = TargetExecutionState.TERMINATED, //
 				DISPLAY_ATTRIBUTE_NAME, updateDisplay() //
 			), "Exited");
 		}
-		listeners.fire(TargetExecutionStateListener.class)
-				.executionStateChanged(this, TargetExecutionState.TERMINATED);
+	}
+
+	protected void gatherThreads(List<? super GdbModelTargetThread> into,
+			Collection<? extends GdbThread> from) {
+		for (GdbThread t : from) {
+			GdbModelTargetThread p = threads.getTargetThread(t);
+			if (p != null) {
+				into.add(p);
+			}
+		}
+	}
+
+	protected void emitEvent(GdbStateChangeRecord sco, GdbModelTargetThread targetEventThread) {
+		GdbReason reason = sco.getReason();
+		if (reason instanceof GdbBreakpointHitReason) {
+			GdbBreakpointHitReason bpHit = (GdbBreakpointHitReason) reason;
+			List<Object> params = new ArrayList<>();
+			GdbModelTargetBreakpointLocation loc = threads.breakpointHit(bpHit);
+			if (loc != null) {
+				// e.g. target could execute INT3, causing "trapped" for unknown bp/loc
+				params.add(loc);
+			}
+			gatherThreads(params, sco.getAffectedThreads());
+			impl.session.getListeners().fire.event(impl.session, targetEventThread,
+				TargetEventType.BREAKPOINT_HIT, bpHit.desc(), params);
+		}
+		else if (reason instanceof GdbEndSteppingRangeReason) {
+			List<Object> params = new ArrayList<>();
+			gatherThreads(params, sco.getAffectedThreads());
+			impl.session.getListeners().fire.event(impl.session, targetEventThread,
+				TargetEventType.STEP_COMPLETED, reason.desc(), params);
+		}
+		else if (reason instanceof GdbSignalReceivedReason) {
+			GdbSignalReceivedReason signal = (GdbSignalReceivedReason) reason;
+			List<Object> params = new ArrayList<>();
+			params.add(signal.getSignalName());
+			gatherThreads(params, sco.getAffectedThreads());
+			impl.session.getListeners().fire.event(impl.session, targetEventThread,
+				TargetEventType.SIGNAL, reason.desc(), params);
+		}
+		else {
+			List<Object> params = new ArrayList<>();
+			gatherThreads(params, sco.getAffectedThreads());
+			impl.session.getListeners().fire.event(impl.session, targetEventThread,
+				TargetEventType.STOPPED, reason.desc(), params);
+		}
+	}
+
+	protected void inferiorRunning(GdbReason reason) {
+		realState = TargetExecutionState.RUNNING;
+		if (!state.isAlive()) {
+			return;
+		}
+		changeAttributes(List.of(), Map.of( //
+			STATE_ATTRIBUTE_NAME, state = realState //
+		), reason.desc());
+	}
+
+	protected void inferiorStopped(GdbReason reason) {
+		realState = TargetExecutionState.STOPPED;
+		if (!state.isAlive()) {
+			return;
+		}
+		changeAttributes(List.of(), Map.of( //
+			STATE_ATTRIBUTE_NAME, state = realState //
+		), reason.desc());
 	}
 
 	protected void updateDisplayAttribute() {
@@ -269,8 +348,13 @@ public class GdbModelTargetInferior
 		if (inferior.getPid() == null) {
 			return display = String.format("%d - <null>", inferior.getId());
 		}
-		return display = String.format("%d - %s - %s", inferior.getId(), inferior.getDescriptor(),
-			inferior.getExecutable());
+		String descriptor = inferior.getDescriptor();
+		String[] split = descriptor.split(" ");
+		if (base == 16) {
+			descriptor = split[0] + " 0x" + Long.toHexString(Long.decode(split[1]));
+		}
+		return display =
+			String.format("%d - %s - %s", inferior.getId(), descriptor, inferior.getExecutable());
 	}
 
 	@Override
@@ -278,27 +362,97 @@ public class GdbModelTargetInferior
 		return display;
 	}
 
+	@Override
+	public TargetExecutionState getExecutionState() {
+		return state;
+	}
+
 	protected void invalidateMemoryAndRegisterCaches() {
 		memory.invalidateMemoryCaches();
 		threads.invalidateRegisterCaches();
 	}
 
-	protected void updateMemory() {
-		// This is a little ew. Wish I didn't have to list regions every STOP
-		memory.update().exceptionally(ex -> {
-			Msg.error(this, "Could not update process memory mappings", ex);
-			return null;
-		});
-	}
-
 	@Override
 	@Internal
-	public CompletableFuture<Void> select() {
-		return inferior.select();
+	public CompletableFuture<Void> setActive() {
+		return impl.gateFuture(inferior.setActive());
 	}
 
 	@TargetAttributeType(name = EXIT_CODE_ATTRIBUTE_NAME)
 	public Long getExitCode() {
 		return exitCode;
 	}
+
+	/**
+	 * Handle state changes for this inferior
+	 * 
+	 * <p>
+	 * Desired order of updates:
+	 * <ol>
+	 * <li>TargetEvent emitted</li>
+	 * <li>Thread states/stacks updated</li>
+	 * <li>Memory regions updated (Ew)</li>
+	 * </ol>
+	 * 
+	 * <p>
+	 * Note that the event thread may not belong to this inferior. When it does not, this inferior
+	 * will not emit any event(). Presumably, this same method will be called on the relevant
+	 * inferior, which will report the event. However, this inferior must still update its state.
+	 * Without this screening:
+	 * <ol>
+	 * <li>The thread gets replicated into a different inferior</li>
+	 * <li>The event() gets replicated on a different inferior<br>
+	 * (We only need to report state changes, not event, for non-event inferiors</li>
+	 * </ol>
+	 * 
+	 * @param sco the record of the change
+	 */
+	public CompletableFuture<Void> stateChanged(GdbStateChangeRecord sco) {
+
+		GdbModelTargetThread targetEventThread = null;
+		GdbThread gdbEventThread = sco.getEventThread();
+		if (gdbEventThread != null && gdbEventThread.getInferior() == inferior) {
+			targetEventThread = threads.getTargetThread(gdbEventThread);
+		}
+		if (sco.getState() == GdbState.RUNNING) {
+			inferiorRunning(sco.getReason());
+			List<Object> params = new ArrayList<>();
+			gatherThreads(params, sco.getAffectedThreads());
+			if (targetEventThread != null) {
+				impl.session.getListeners().fire.event(impl.session, targetEventThread,
+					TargetEventType.RUNNING, "Running", params);
+			}
+		}
+		if (sco.getState() != GdbState.STOPPED) {
+			return threads.stateChanged(sco);
+		}
+
+		if (targetEventThread != null) {
+			emitEvent(sco, targetEventThread);
+		}
+
+		AsyncFence fence = new AsyncFence();
+		// TODO: How does GDB for Windows handle WoW64?
+		// Can there be architecture changes during execution? Per thread?
+		//fence.include(environment.refreshArchitecture());
+		fence.include(threads.stateChanged(sco));
+		inferiorStopped(sco.getReason());
+		//registers.stateChanged(sco);
+		fence.include(memory.stateChanged(sco));
+		return fence.ready();
+	}
+
+	public void addBreakpointLocation(GdbModelTargetBreakpointLocation loc) {
+		breakpoints.addBreakpointLocation(loc);
+	}
+
+	public void removeBreakpointLocation(GdbModelTargetBreakpointLocation loc) {
+		breakpoints.removeBreakpointLocation(loc);
+	}
+
+	public void setBase(Object value) {
+		this.base = (Integer) value;
+		updateDisplayAttribute();
+	}
+
 }

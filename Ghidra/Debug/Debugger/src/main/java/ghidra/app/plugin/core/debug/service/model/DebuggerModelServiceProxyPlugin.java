@@ -33,7 +33,6 @@ import ghidra.app.plugin.core.debug.utils.BackgroundUtils;
 import ghidra.app.services.*;
 import ghidra.async.SwingExecutorService;
 import ghidra.dbg.*;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.target.*;
 import ghidra.dbg.target.TargetLauncher.TargetCmdLineLauncher;
 import ghidra.framework.main.AppInfo;
@@ -54,8 +53,7 @@ import ghidra.util.task.TaskMonitor;
 		category = PluginCategoryNames.DEBUGGER, //
 		packageName = DebuggerPluginPackage.NAME, //
 		status = PluginStatus.RELEASED, //
-		eventsConsumed = {
-			ProgramActivatedPluginEvent.class, //
+		eventsConsumed = { ProgramActivatedPluginEvent.class, //
 			ProgramClosedPluginEvent.class, //
 		}, //
 		servicesRequired = { //
@@ -147,7 +145,7 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 
 	/*@AutoServiceConsumed
 	private ProgramManager programManager;
-	@SuppressWarnings("unused") // need strong ref
+	@SuppressWarnings("unused") // need strong obj
 	private AutoService.Wiring autoServiceWiring;*/
 
 	// This is not delegated. Each tool can have its own active model.
@@ -231,8 +229,8 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 		}).thenCompose(root -> {
 			monitor.incrementProgress(1);
 			monitor.setMessage("Finding launcher");
-			CompletableFuture<? extends TargetLauncher<?>> futureLauncher =
-				DebugModelConventions.findSuitable(TargetLauncher.tclass, root);
+			CompletableFuture<? extends TargetLauncher> futureLauncher =
+				DebugModelConventions.findSuitable(TargetLauncher.class, root);
 			return futureLauncher;
 		}).thenCompose(launcher -> {
 			monitor.incrementProgress(1);
@@ -363,18 +361,17 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 	}
 
 	@Override
-	public CompletableFuture<TraceRecorder> recordTargetBestOffer(TargetObject target) {
+	public TraceRecorder recordTargetBestOffer(TargetObject target) {
 		return delegate.recordTargetBestOffer(target);
 	}
 
 	@Override
-	public CompletableFuture<TraceRecorder> doRecordTargetPromptOffers(PluginTool t,
-			TargetObject target) {
+	public TraceRecorder doRecordTargetPromptOffers(PluginTool t, TargetObject target) {
 		return delegate.doRecordTargetPromptOffers(t, target);
 	}
 
 	@Override
-	public CompletableFuture<TraceRecorder> recordTargetPromptOffers(TargetObject target) {
+	public TraceRecorder recordTargetPromptOffers(TargetObject target) {
 		return doRecordTargetPromptOffers(tool, target);
 	}
 
@@ -447,8 +444,8 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 	}
 
 	@Override
-	public TraceRecorder getRecorderForSuccessor(TargetObjectRef ref) {
-		return delegate.getRecorderForSuccessor(ref);
+	public TraceRecorder getRecorderForSuccessor(TargetObject obj) {
+		return delegate.getRecorderForSuccessor(obj);
 	}
 
 	@Override
@@ -457,7 +454,7 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 	}
 
 	@Override
-	public TargetThread<?> getTargetThread(TraceThread thread) {
+	public TargetThread getTargetThread(TraceThread thread) {
 		return delegate.getTargetThread(thread);
 	}
 
@@ -472,17 +469,17 @@ public class DebuggerModelServiceProxyPlugin extends Plugin
 	}
 
 	@Override
-	public TraceThread getTraceThread(TargetThread<?> thread) {
+	public TraceThread getTraceThread(TargetThread thread) {
 		return delegate.getTraceThread(thread);
 	}
 
 	@Override
-	public TraceThread getTraceThread(TargetObject target, TargetThread<?> thread) {
+	public TraceThread getTraceThread(TargetObject target, TargetThread thread) {
 		return delegate.getTraceThread(target, thread);
 	}
 
 	@Override
-	public TargetObjectRef getTargetFocus(TargetObject target) {
+	public TargetObject getTargetFocus(TargetObject target) {
 		return delegate.getTargetFocus(target);
 	}
 }

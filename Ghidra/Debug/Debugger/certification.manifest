@@ -3,10 +3,10 @@
 ##MODULE IP: Modified Nuvola Icons - LGPL 2.1
 ##MODULE IP: Nuvola Icons - LGPL 2.1
 ##MODULE IP: Oxygen Icons - LGPL 3.0
+##MODULE IP: Tango Icons - Public Domain
 .classpath||NONE||reviewed||END|
 .project||NONE||reviewed||END|
 Module.manifest||GHIDRA||||END|
-build.gradle||GHIDRA||||END|
 data/ExtensionPoint.manifest||GHIDRA||||END|
 src/main/help/help/TOC_Source.xml||GHIDRA||||END|
 src/main/help/help/shared/arrow.gif||GHIDRA||||END|
@@ -86,6 +86,8 @@ src/main/help/help/topics/DebuggerObjectsPlugin/images/stepinto.png||GHIDRA||||E
 src/main/help/help/topics/DebuggerObjectsPlugin/images/stepout.png||GHIDRA||||END|
 src/main/help/help/topics/DebuggerObjectsPlugin/images/stepover.png||GHIDRA||||END|
 src/main/help/help/topics/DebuggerObjectsPlugin/images/stop.png||GHIDRA||||END|
+src/main/help/help/topics/DebuggerPcodeStepperPlugin/DebuggerPcodeStepperPlugin.html||GHIDRA||||END|
+src/main/help/help/topics/DebuggerPcodeStepperPlugin/images/DebuggerPcodeStepperPlugin.png||GHIDRA||||END|
 src/main/help/help/topics/DebuggerRegionsPlugin/DebuggerRegionsPlugin.html||GHIDRA||||END|
 src/main/help/help/topics/DebuggerRegionsPlugin/images/DebuggerRegionsPlugin.png||GHIDRA||||END|
 src/main/help/help/topics/DebuggerRegistersPlugin/DebuggerRegistersPlugin.html||GHIDRA||||END|

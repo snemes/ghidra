@@ -16,6 +16,8 @@
 package agent.gdb.model.impl;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -25,8 +27,8 @@ import agent.gdb.manager.impl.cmd.GdbCommandError;
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.DebuggerModelClosedReason;
 import ghidra.dbg.agent.AbstractDebuggerObjectModel;
+import ghidra.dbg.error.DebuggerModelTerminatingException;
 import ghidra.dbg.error.DebuggerUserException;
-import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibility;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.schema.AnnotatedSchemaContext;
 import ghidra.dbg.target.schema.TargetObjectSchema;
@@ -63,6 +65,8 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 	protected final CompletableFuture<GdbModelTargetSession> completedSession;
 	protected final GdbStateListener gdbExitListener = this::checkExited;
 
+	protected Map<Object, TargetObject> objectMap = new HashMap<>();
+
 	public GdbModelImpl() {
 		this.gdb = GdbManager.newInstance();
 		this.session = new GdbModelTargetSession(this, ROOT_SCHEMA);
@@ -70,6 +74,7 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 		this.completedSession = CompletableFuture.completedFuture(session);
 
 		gdb.addStateListener(gdbExitListener);
+		addModelRoot(session);
 	}
 
 	@Override
@@ -101,11 +106,11 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 			}
 			case RUNNING: {
 				session.invalidateMemoryAndRegisterCaches();
-				session.setAccessibility(TargetAccessibility.INACCESSIBLE);
+				session.setAccessible(false);
 				break;
 			}
 			case STOPPED: {
-				session.setAccessibility(TargetAccessibility.ACCESSIBLE);
+				session.setAccessible(true);
 				break;
 			}
 			case EXIT: {
@@ -126,7 +131,8 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 			return gdb.runRC();
 		}
 		catch (IOException e) {
-			return CompletableFuture.failedFuture(e);
+			return CompletableFuture.failedFuture(
+				new DebuggerModelTerminatingException("Error while starting GDB", e));
 		}
 	}
 
@@ -136,7 +142,7 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 
 	public void terminate() throws IOException {
 		listeners.fire.modelClosed(DebuggerModelClosedReason.NORMAL);
-		session.invalidateSubtree("GDB is terminating");
+		session.invalidateSubtree(session, "GDB is terminating");
 		gdb.terminate();
 	}
 
@@ -154,10 +160,23 @@ public class GdbModelImpl extends AbstractDebuggerObjectModel {
 	public CompletableFuture<Void> close() {
 		try {
 			terminate();
-			return AsyncUtils.NIL;
+			return super.close();
 		}
 		catch (Throwable t) {
 			return CompletableFuture.failedFuture(t);
 		}
 	}
+
+	public void addModelObject(Object object, TargetObject targetObject) {
+		objectMap.put(object, targetObject);
+	}
+
+	public TargetObject getModelObject(Object object) {
+		return objectMap.get(object);
+	}
+
+	public void deleteModelObject(Object object) {
+		objectMap.remove(object);
+	}
+
 }

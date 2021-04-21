@@ -23,7 +23,7 @@ import ghidra.dbg.target.TargetInterpreter;
 
 public class TestTargetInterpreter
 		extends DefaultTestTargetObject<TestTargetObject, TestTargetSession>
-		implements TargetInterpreter<TestTargetInterpreter> {
+		implements TargetInterpreter {
 
 	public class ExecuteCall<T> extends CompletableFuture<T> {
 		public final String cmd;
@@ -66,18 +66,16 @@ public class TestTargetInterpreter
 		changeAttributes(List.of(), Map.of(
 			DISPLAY_ATTRIBUTE_NAME, display //
 		), "Display changed");
-		listeners.fire.displayChanged(this, display);
 	}
 
 	public void setPrompt(String prompt) {
 		changeAttributes(List.of(), Map.of(
 			PROMPT_ATTRIBUTE_NAME, prompt //
 		), "Prompt changed");
-		listeners.fire(TargetInterpreterListener.class).promptChanged(this, prompt);
 	}
 
 	public void output(Channel channel, String line) {
-		listeners.fire(TargetInterpreterListener.class).consoleOutput(this, channel, line + "\n");
+		listeners.fire.consoleOutput(this, channel, line + "\n");
 	}
 
 	public void clearCalls() {

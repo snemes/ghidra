@@ -52,8 +52,9 @@ public class GdbStackFrameImpl implements GdbStackFrame {
 
 	@Override
 	public String toString() {
-		return "<GdbStackFrame: level=" + level + ",addr=0x" + addr.toString(16) + ",func='" +
-			func + "'>";
+		String strAddr = addr == null ? "<null>" : addr.toString(16);
+		String strFunc = func == null ? "<null>" : func.toString();
+		return "<GdbStackFrame: level=" + level + ",addr=0x" + strAddr + ",func='" + strFunc + "'>";
 	}
 
 	@Override
@@ -77,8 +78,34 @@ public class GdbStackFrameImpl implements GdbStackFrame {
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
-		return manager.execute(new GdbThreadSelectCommand(manager, thread.getId(), level));
+	public GdbStackFrame fillWith(GdbStackFrame frame) {
+		if (addr != null && func != null) {
+			return this;
+		}
+		BigInteger fAddr = addr;
+		if (fAddr == null) {
+			if (frame != null && frame.getAddress() != null) {
+				fAddr = frame.getAddress();
+			}
+			else {
+				fAddr = BigInteger.ZERO;
+			}
+		}
+		String fFunc = func;
+		if (fFunc == null) {
+			if (frame != null && frame.getFunction() != null) {
+				fFunc = frame.getFunction();
+			}
+			else {
+				fFunc = "";
+			}
+		}
+		return new GdbStackFrameImpl(thread, level, fAddr, fFunc);
+	}
+
+	@Override
+	public CompletableFuture<Void> setActive() {
+		return manager.execute(new GdbSetActiveThreadCommand(manager, thread.getId(), level));
 	}
 
 	@Override
@@ -95,7 +122,9 @@ public class GdbStackFrameImpl implements GdbStackFrame {
 
 	@Override
 	public CompletableFuture<Void> writeRegisters(Map<GdbRegister, BigInteger> regVals) {
-		return manager.execute(new GdbWriteRegistersCommand(manager, thread, level, regVals));
+		return thread.getInferior().syncEndianness().thenCompose(__ -> {
+			return manager.execute(new GdbWriteRegistersCommand(manager, thread, level, regVals));
+		});
 	}
 
 	@Override

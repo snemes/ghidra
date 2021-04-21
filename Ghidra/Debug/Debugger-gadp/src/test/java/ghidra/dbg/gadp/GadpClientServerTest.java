@@ -15,10 +15,10 @@
  */
 package ghidra.dbg.gadp;
 
-import static ghidra.lifecycle.Unfinished.TODO;
 import static org.junit.Assert.*;
 
 import java.io.IOException;
+import java.lang.invoke.MethodHandles;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -27,7 +27,6 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.junit.Ignore;
@@ -38,32 +37,32 @@ import com.google.protobuf.GeneratedMessageV3;
 import generic.ID;
 import generic.Unique;
 import ghidra.async.*;
-import ghidra.dbg.DebugModelConventions;
-import ghidra.dbg.DebuggerObjectModel;
+import ghidra.dbg.*;
 import ghidra.dbg.agent.*;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.attributes.TargetStringList;
+import ghidra.dbg.error.DebuggerIllegalArgumentException;
+import ghidra.dbg.gadp.GadpClientServerTest.EventListener.CallEntry;
 import ghidra.dbg.gadp.client.GadpClient;
 import ghidra.dbg.gadp.protocol.Gadp;
+import ghidra.dbg.gadp.protocol.Gadp.RootMessage;
 import ghidra.dbg.gadp.server.AbstractGadpServer;
+import ghidra.dbg.gadp.server.GadpClientHandler;
 import ghidra.dbg.gadp.util.AsyncProtobufMessageChannel;
 import ghidra.dbg.target.*;
-import ghidra.dbg.target.TargetFocusScope.TargetFocusScopeListener;
 import ghidra.dbg.target.TargetLauncher.TargetCmdLineLauncher;
 import ghidra.dbg.target.TargetMethod.ParameterDescription;
 import ghidra.dbg.target.TargetMethod.TargetParameterMap;
-import ghidra.dbg.target.TargetObject.TargetObjectFetchingListener;
-import ghidra.dbg.target.TargetObject.TargetObjectListener;
-import ghidra.dbg.target.schema.TargetAttributeType;
-import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
-import ghidra.dbg.util.*;
-import ghidra.dbg.util.AttributesChangedListener.AttributesChangedInvocation;
-import ghidra.dbg.util.ElementsChangedListener.ElementsChangedInvocation;
+import ghidra.dbg.target.schema.*;
+import ghidra.dbg.target.schema.TargetObjectSchema.ResyncMode;
+import ghidra.dbg.testutil.*;
+import ghidra.dbg.testutil.AttributesChangedListener.AttributesChangedInvocation;
+import ghidra.dbg.testutil.ElementsChangedListener.ElementsChangedInvocation;
+import ghidra.dbg.util.PathUtils;
 import ghidra.program.model.address.*;
 import ghidra.util.Msg;
 import ghidra.util.SystemUtilities;
 
-public class GadpClientServerTest {
+public class GadpClientServerTest implements AsyncTestUtils {
 	public static final long TIMEOUT_MILLISECONDS =
 		SystemUtilities.isInTestingBatchMode() ? 5000 : Long.MAX_VALUE;
 
@@ -232,18 +231,50 @@ public class GadpClientServerTest {
 		}
 	}
 
-	protected static <T> T waitOn(CompletableFuture<T> future) throws Throwable {
-		try {
-			return future.get(TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
+	public static class PrintingAsyncProtobufMessageChannel<//
+			S extends GeneratedMessageV3, R extends GeneratedMessageV3>
+			extends AsyncProtobufMessageChannel<S, R> {
+		private final String sendPrefix;
+		private final String recvPrefix;
+
+		public PrintingAsyncProtobufMessageChannel(String local, String peer,
+				AsynchronousByteChannel channel) {
+			super(channel);
+			this.sendPrefix = local + "->" + peer + ": ";
+			this.recvPrefix = local + "<-" + peer + ": ";
 		}
-		catch (Exception e) {
-			throw AsyncUtils.unwrapThrowable(e);
+
+		@Override
+		public CompletableFuture<Integer> write(S msg) {
+			Msg.debug(this, sendPrefix + msg);
+			return super.write(msg).thenApplyAsync(c -> {
+				return c;
+			});
+		}
+
+		@Override
+		public <R2 extends R> CompletableFuture<R2> read(IOFunction<R2> receiver) {
+			return super.read(receiver).thenApplyAsync(msg -> {
+				Msg.debug(this, recvPrefix + msg);
+				return msg;
+			});
+		}
+	}
+
+	public static class PrintingGadpClient extends GadpClient {
+		public PrintingGadpClient(String description, AsynchronousByteChannel channel) {
+			super(description, channel);
+		}
+
+		@Override
+		protected AsyncProtobufMessageChannel<Gadp.RootMessage, Gadp.RootMessage> createMessageChannel(
+				AsynchronousByteChannel channel) {
+			return new PrintingAsyncProtobufMessageChannel<>("C", "S", channel);
 		}
 	}
 
 	@TargetObjectSchemaInfo(name = "Session")
-	public class TestGadpTargetSession extends DefaultTargetModelRoot
-			implements TargetFocusScope<TestGadpTargetSession> {
+	public class TestGadpTargetSession extends DefaultTargetModelRoot implements TargetFocusScope {
 		protected final TestGadpTargetAvailableContainer available =
 			new TestGadpTargetAvailableContainer(this);
 		protected final TestGadpTargetProcessContainer processes =
@@ -251,10 +282,17 @@ public class GadpClientServerTest {
 		protected final TestGadpTargetAvailableLinkContainer links =
 			new TestGadpTargetAvailableLinkContainer(this);
 
-		public TestGadpTargetSession(FakeDebuggerObjectModel model) {
-			super(model, "Session");
+		public TestGadpTargetSession(TestGadpObjectModel model, TargetObjectSchema schema) {
+			super(model, "Session", schema);
 
-			changeAttributes(List.of(), List.of(available, processes), Map.of(), "Initialized");
+			changeAttributes(List.of(), List.of(available, processes), Map.ofEntries(
+				Map.entry(FOCUS_ATTRIBUTE_NAME, this)),
+				"Initialized");
+		}
+
+		@Override
+		public AbstractDebuggerObjectModel getModel() {
+			return super.getModel();
 		}
 
 		@TargetAttributeType(name = "Available", required = true, fixed = true)
@@ -267,24 +305,20 @@ public class GadpClientServerTest {
 			return processes;
 		}
 
-		public void addLinks() {
-			assertNotNull(available.fetchElements().getNow(null));
-			links.setElements(List.of(), Map.of(
-				"1", available.getCachedElements().get("2"),
-				"2", available.getCachedElements().get("1")),
-				"Initialized");
+		public void addLinks() throws Throwable {
+			waitOn(available.fetchElements());
+			links.setElements(List.of(), Map.of("1", available.getCachedElements().get("2"), "2",
+				available.getCachedElements().get("1")), "Initialized");
 			changeAttributes(List.of(), List.of(links), Map.of(), "Adding links");
 		}
 
 		public void setFocus(TestGadpTargetProcess process) {
-			changeAttributes(List.of(), List.of(), Map.of(
-				FOCUS_ATTRIBUTE_NAME, process),
+			changeAttributes(List.of(), List.of(), Map.of(FOCUS_ATTRIBUTE_NAME, process),
 				"New Process");
-			listeners.fire(TargetFocusScopeListener.class).focusChanged(this, process);
 		}
 
 		@Override
-		public CompletableFuture<Void> requestFocus(TargetObjectRef obj) {
+		public CompletableFuture<Void> requestFocus(TargetObject obj) {
 			throw new UnsupportedOperationException();
 		}
 	}
@@ -292,24 +326,14 @@ public class GadpClientServerTest {
 	public class TestTargetObject<E extends TargetObject, P extends TargetObject>
 			extends DefaultTargetObject<E, P> {
 
-		public TestTargetObject(DebuggerObjectModel model, P parent, String key, String typeHint) {
+		public TestTargetObject(AbstractDebuggerObjectModel model, P parent, String key,
+				String typeHint) {
 			super(model, parent, key, typeHint);
 		}
 
 		@Override
-		public CompletableFuture<?> fetchAttribute(String name) {
-			if (!PathUtils.isInvocation(name)) {
-				return super.fetchAttribute(name);
-			}
-			Map.Entry<String, String> invocation = PathUtils.parseInvocation(name);
-			TestTargetMethod method =
-				getTypedAttributeNowByName(invocation.getKey(), TestTargetMethod.class, null);
-			if (method == null) {
-				return AsyncUtils.nil();
-			}
-			Object ret = method.testInvoke(invocation.getValue());
-			changeAttributes(List.of(), Map.of(name, ret), "Invoked " + name);
-			return CompletableFuture.completedFuture(ret);
+		public AbstractDebuggerObjectModel getModel() {
+			return super.getModel();
 		}
 
 		@Override
@@ -327,101 +351,150 @@ public class GadpClientServerTest {
 		}
 	}
 
-	private static final TargetParameterMap PARAMS = TargetParameterMap.copyOf(Map.of(
-		"whom", ParameterDescription.create(String.class, "whom", true, "World",
-			"Whom to greet", "The person or people to greet"),
-		"others", ParameterDescription.create(TargetStringList.class, "others",
-			false, TargetStringList.of(), "Others to greet",
-			"List of other people to greet individually")));
+	private static final TargetParameterMap PARAMS = TargetParameterMap.copyOf(Map.of("whom",
+		ParameterDescription.create(String.class, "whom", true, "World", "Whom to greet",
+			"The person or people to greet"),
+		"others",
+		ParameterDescription.create(TargetStringList.class, "others", false, TargetStringList.of(),
+			"Others to greet", "List of other people to greet individually")));
 
-	public class TestTargetMethod extends TestTargetObject<TargetObject, TargetObject>
-			implements TargetMethod<TestTargetMethod> {
-		private Function<String, ?> method;
+	public class TestGadpTargetMethod extends TestTargetObject<TargetObject, TestTargetObject<?, ?>>
+			implements TargetMethod {
 
-		public TestTargetMethod(TargetObject parent, String key,
-				Function<String, ?> method) {
+		public TestGadpTargetMethod(TestTargetObject<?, ?> parent, String key) {
 			super(parent.getModel(), parent, key, "Method");
-			this.method = method;
 
-			setAttributes(Map.of(
-				PARAMETERS_ATTRIBUTE_NAME, PARAMS,
-				RETURN_TYPE_ATTRIBUTE_NAME, Integer.class),
-				"Initialized");
-		}
-
-		public Object testInvoke(String paramsExpr) {
-			return method.apply(paramsExpr);
+			setAttributes(Map.of(PARAMETERS_ATTRIBUTE_NAME, PARAMS, RETURN_TYPE_ATTRIBUTE_NAME,
+				Integer.class), "Initialized");
 		}
 
 		@Override
 		public CompletableFuture<Object> invoke(Map<String, ?> arguments) {
 			TestMethodInvocation invocation = new TestMethodInvocation(arguments);
 			invocations.offer(invocation);
-			invocationCount.set(invocations.size(), null);
-			return invocation;
+			return model.gateFuture(invocation.thenApply(obj -> {
+				parent.changeAttributes(List.of(),
+					Map.ofEntries(Map.entry("greet(" + arguments.get("arg") + ")", obj)),
+					"greet() invoked");
+				return obj;
+			}));
 		}
 	}
 
+	@TargetObjectSchemaInfo(name = "ProcessContainer")
 	public class TestGadpTargetProcessContainer
 			extends TestTargetObject<TestGadpTargetProcess, TestGadpTargetSession>
-			implements TargetLauncher<TestGadpTargetProcessContainer> {
+			implements TargetLauncher, TargetConfigurable {
+
+		static final String BASE_ATTRIBUTE_NAME = "base";
+
+		int base = 10;
+
 		public TestGadpTargetProcessContainer(TestGadpTargetSession session) {
 			super(session.getModel(), session, "Processes", "ProcessContainer");
+
+			changeAttributes(List.of(), Map.ofEntries(
+				Map.entry(BASE_ATTRIBUTE_NAME, base)),
+				"Initialized");
 		}
 
 		@Override
 		public CompletableFuture<Void> launch(Map<String, ?> args) {
 			launches.offer(args);
-			TestGadpTargetProcess process = new TestGadpTargetProcess(this, 0);
+			long pid = args.containsKey("pid") ? (Long) args.get("pid") : 0;
+			TestGadpTargetProcess process = new TestGadpTargetProcess(this, pid, base);
 			changeElements(List.of(), List.of(process), Map.of(), "Launched");
 			parent.setFocus(process);
 			return AsyncUtils.NIL;
 		}
-	}
 
-	public class TestGadpTargetProcess
-			extends TestTargetObject<TargetObject, TestGadpTargetProcessContainer> {
-		public TestGadpTargetProcess(TestGadpTargetProcessContainer processes, int index) {
-			super(processes.getModel(), processes,
-				PathUtils.makeKey(PathUtils.makeIndex(index)),
-				"Process");
+		@Override
+		public CompletableFuture<Void> writeConfigurationOption(String key, Object value) {
+			if (BASE_ATTRIBUTE_NAME.equals(key)) {
+				if (!(value instanceof Integer)) {
+					throw new DebuggerIllegalArgumentException(
+						"base must be an Integer in [0, 36]");
+				}
+				int base = (Integer) value;
+				if (base < 0 || 36 < base) {
+					throw new DebuggerIllegalArgumentException(
+						"base must be an Integer in [0, 36]");
+				}
+				setBase(base);
+			}
+			else {
+				throw new DebuggerIllegalArgumentException("unrecognized option: '" + key + "'");
+			}
+			return AsyncUtils.NIL;
+		}
+
+		public void setBase(int base) {
+			this.base = base;
+			for (TestGadpTargetProcess proc : elements.values()) {
+				proc.setBase(base);
+			}
 		}
 	}
 
+	@TargetObjectSchemaInfo(name = "Process")
+	public class TestGadpTargetProcess
+			extends TestTargetObject<TargetObject, TestGadpTargetProcessContainer>
+			implements TargetProcess {
+		final long pid;
+		int base = 10;
+
+		public TestGadpTargetProcess(TestGadpTargetProcessContainer processes, long pid, int base) {
+			super(processes.getModel(), processes, PathUtils.makeKey(PathUtils.makeIndex(pid)),
+				"Process");
+			this.pid = pid;
+			setBase(base);
+		}
+
+		void setBase(int base) {
+			this.base = base;
+			updateDisplay("Reconfigured base");
+		}
+
+		void updateDisplay(String reason) {
+			changeAttributes(List.of(),
+				Map.ofEntries(Map.entry(DISPLAY_ATTRIBUTE_NAME, computeDisplay())),
+				reason);
+		}
+
+		String computeDisplay() {
+			return Long.toString(pid, base);
+		}
+	}
+
+	@TargetObjectSchemaInfo(name = "AvailableContainer", elementResync = ResyncMode.ALWAYS)
 	public class TestGadpTargetAvailableContainer
 			extends TestTargetObject<TestGadpTargetAvailable, TestGadpTargetSession> {
-		public char punct = '!';
 
 		public TestGadpTargetAvailableContainer(TestGadpTargetSession session) {
 			super(session.getModel(), session, "Available", "AvailableContainer");
 
-			setAttributes(List.of(
-				new TestTargetMethod(this, "greet", p -> "Hello, " + p + punct)),
-				Map.of(), "Initialized");
+			setAttributes(List.of(new TestGadpTargetMethod(this, "greet")), Map.of(),
+				"Initialized");
 		}
 
 		@Override
-		public CompletableFuture<Void> requestElements(
-				boolean refresh) {
-			setElements(List.of(
-				new TestGadpTargetAvailable(this, 1, "echo"),
-				new TestGadpTargetAvailable(this, 2, "dd")),
-				Map.of(), "Refreshed");
+		public CompletableFuture<Void> requestElements(boolean refresh) {
+			setElements(List.of(new TestGadpTargetAvailable(this, 1, "echo"),
+				new TestGadpTargetAvailable(this, 2, "dd")), Map.of(), "Refreshed");
 			return super.requestElements(refresh);
 		}
 	}
 
+	@TargetObjectSchemaInfo(name = "Available")
 	public class TestGadpTargetAvailable
 			extends TestTargetObject<TargetObject, TestGadpTargetAvailableContainer>
-			implements TargetAttachable<TestGadpTargetAvailable> {
+			implements TargetAttachable {
 
 		public TestGadpTargetAvailable(TestGadpTargetAvailableContainer available, int pid,
 				String cmd) {
 			super(available.getModel(), available, PathUtils.makeKey(PathUtils.makeIndex(pid)),
 				"Available");
-			setAttributes(List.of(), Map.of(
-				"pid", pid,
-				"cmd", cmd //
+			changeAttributes(List.of(), Map.of("pid", pid, "cmd", cmd //
 			), "Initialized");
 		}
 	}
@@ -437,38 +510,70 @@ public class GadpClientServerTest {
 		}
 	}
 
-	// TODO: Refactor with other Fake and Test. Probably put in Framework-Debugging....
-	public class FakeDebuggerObjectModel extends AbstractDebuggerObjectModel {
-		private final TestGadpTargetSession session = new TestGadpTargetSession(this);
-
+	public static class BlankObjectModel extends AbstractDebuggerObjectModel {
 		private final AddressSpace ram =
 			new GenericAddressSpace("RAM", 64, AddressSpace.TYPE_RAM, 0);
 		private final AddressFactory factory =
 			new DefaultAddressFactory(new AddressSpace[] { ram });
 
 		@Override
-		public CompletableFuture<? extends TargetObject> fetchModelRoot() {
-			return CompletableFuture.completedFuture(session);
-		}
-
-		@Override
 		public AddressFactory getAddressFactory() {
 			return factory;
 		}
+	}
+
+	// TODO: Refactor with other Fake and Test. Probably put in Framework-Debugging....
+	public class TestGadpObjectModel extends BlankObjectModel {
+		private TargetObjectSchema rootSchema = EnumerableTargetObjectSchema.OBJECT;
+		private TestGadpTargetSession session;
+
+		public TestGadpObjectModel(boolean createSession) {
+			if (createSession) {
+				AnnotatedSchemaContext ctx = new AnnotatedSchemaContext();
+				rootSchema = ctx.getSchemaForClass(TestGadpTargetSession.class);
+				session = new TestGadpTargetSession(this, rootSchema);
+				addModelRoot(session);
+			}
+		}
+
+		@Override // file access
+		protected void addModelRoot(SpiTargetObject root) {
+			super.addModelRoot(root);
+		}
 
 		@Override
-		public CompletableFuture<Void> close() {
-			return AsyncUtils.NIL;
+		public TargetObjectSchema getRootSchema() {
+			return rootSchema;
 		}
 	}
 
 	public class TestGadpServer extends AbstractGadpServer {
-		@SuppressWarnings("hiding")
-		final FakeDebuggerObjectModel model;
+		final TestGadpObjectModel model;
 
 		public TestGadpServer(SocketAddress addr) throws IOException {
-			super(new FakeDebuggerObjectModel(), addr);
-			this.model = (FakeDebuggerObjectModel) getModel();
+			this(new TestGadpObjectModel(true), addr);
+		}
+
+		public TestGadpServer(TestGadpObjectModel model, SocketAddress addr) throws IOException {
+			super(model, addr);
+			this.model = model;
+		}
+	}
+
+	public class PrintingTestGadpServer extends TestGadpServer {
+		public PrintingTestGadpServer(SocketAddress addr) throws IOException {
+			super(addr);
+		}
+
+		@Override
+		protected GadpClientHandler newHandler(AsynchronousSocketChannel sock) {
+			return new GadpClientHandler(this, sock) {
+				@Override
+				protected AsyncProtobufMessageChannel<RootMessage, RootMessage> createMessageChannel(
+						AsynchronousByteChannel byteChannel) {
+					return new PrintingAsyncProtobufMessageChannel<>("S", "C", byteChannel);
+				}
+			};
 		}
 	}
 
@@ -476,13 +581,28 @@ public class GadpClientServerTest {
 		TestGadpServer server;
 
 		public ServerRunner() throws IOException {
-			server = new TestGadpServer(new InetSocketAddress("localhost", 0));
+			server = createServer(new InetSocketAddress("localhost", 0));
 			server.launchAsyncService();
+		}
+
+		protected TestGadpServer createServer(SocketAddress addr) throws IOException {
+			return new TestGadpServer(addr);
 		}
 
 		@Override
 		public void close() throws Exception {
 			server.terminate();
+		}
+	}
+
+	public class PrintingServerRunner extends ServerRunner {
+		public PrintingServerRunner() throws IOException {
+			super();
+		}
+
+		@Override
+		protected TestGadpServer createServer(SocketAddress addr) throws IOException {
+			return new PrintingTestGadpServer(addr);
 		}
 	}
 
@@ -495,12 +615,41 @@ public class GadpClientServerTest {
 	}
 
 	protected Deque<Map<String, ?>> launches = new LinkedList<>();
-	protected AsyncReference<Integer, Void> invocationCount = new AsyncReference<>();
-	protected Deque<TestMethodInvocation> invocations = new LinkedList<>();
+
+	protected static class AsyncDeque<T> {
+		private final Deque<T> deque = new LinkedList<>();
+		private final AsyncReference<Integer, Void> count = new AsyncReference<>(0);
+
+		public boolean offer(T e) {
+			boolean result = deque.offer(e);
+			count.set(deque.size(), null);
+			return result;
+		}
+
+		public T poll() {
+			T result = deque.poll();
+			count.set(deque.size(), null);
+			return result;
+		}
+
+		public void clear() {
+			deque.clear();
+			count.set(0, null);
+		}
+	}
+
+	protected AsyncDeque<TestMethodInvocation> invocations = new AsyncDeque<>();
+
+	protected AsynchronousSocketChannel socketChannel() throws IOException {
+		// Note, it looks like the executor knows to shut itself down on GC
+		AsynchronousChannelGroup group =
+			AsynchronousChannelGroup.withThreadPool(Executors.newSingleThreadExecutor());
+		return AsynchronousSocketChannel.open(group);
+	}
 
 	@Test
 	public void testConnectDisconnect() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 
@@ -516,7 +665,7 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testFetchModelValue() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -535,8 +684,37 @@ public class GadpClientServerTest {
 	}
 
 	@Test
+	@Ignore("Developer's desk only")
+	public void stressTest() throws Throwable {
+		for (int i = 0; i < 1000; i++) {
+			try {
+				System.out.println("ITERATION: " + i);
+				testFetchModelValueCached();
+			}
+			catch (Throwable e) {
+				System.err.println("Failed on iteration " + i);
+				throw e;
+			}
+		}
+	}
+
+	@Test // Sanity check on underlying model
+	public void testFetchModelValueCachedNoGadp() throws Throwable {
+		TestGadpObjectModel model = new TestGadpObjectModel(true);
+		Object rootVal = waitOn(model.fetchModelValue(List.of()));
+		TargetObject root = (TargetObject) rootVal;
+		assertEquals(List.of(), root.getPath());
+		// Do fetchAll to create objects and populate their caches
+		Map<String, ? extends TargetObject> available =
+			waitOn(model.fetchObjectElements(PathUtils.parse("Available")));
+		assertEquals(2, available.size());
+		Object cmd = waitOn(model.fetchModelValue(PathUtils.parse("Available[1].cmd")));
+		assertEquals("echo", cmd);
+	}
+
+	@Test
 	public void testFetchModelValueCached() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		MonitoredAsyncByteChannel monitored = new MonitoredAsyncByteChannel(socket);
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", monitored);
@@ -548,13 +726,13 @@ public class GadpClientServerTest {
 			assertEquals(List.of(), root.getPath());
 			// Do fetchAll to create objects and populate their caches
 			Map<String, ? extends TargetObject> available =
-				waitOn(client.fetchObjectElements(PathUtils.parse("Available"))
-						.thenCompose(DebugModelConventions::fetchAll));
+				waitOn(client.fetchObjectElements(PathUtils.parse("Available")));
 			assertEquals(2, available.size());
 			monitored.reset();
 			Object cmd = waitOn(client.fetchModelValue(PathUtils.parse("Available[1].cmd")));
 			assertEquals("echo", cmd);
-			assertEquals(0, monitored.writeCount);
+			// Just 1 to request .cmd, since the above will only have covered Available[]
+			assertEquals(1, monitored.writeCount);
 			waitOn(client.close());
 		}
 		finally {
@@ -564,28 +742,25 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testInvoke() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
-			TargetObject procCont =
+			TargetObject greet =
 				waitOn(client.fetchModelObject(PathUtils.parse("Available.greet")));
-			assertTrue(procCont.getInterfaceNames().contains("Method"));
-			TargetMethod<?> method = procCont.as(TargetMethod.tclass);
+			assertTrue(greet.getInterfaceNames().contains("Method"));
+			TargetMethod method = greet.as(TargetMethod.class);
 
 			assertEquals(PARAMS, method.getParameters());
 			assertEquals(Integer.class, method.getReturnType());
 
-			CompletableFuture<Object> future = method.invoke(Map.of(
-				"whom", "GADP",
-				"others", TargetStringList.of("Alice", "Bob")));
-			waitOn(invocationCount.waitValue(1));
+			CompletableFuture<Object> future = method
+					.invoke(Map.of("whom", "GADP", "others", TargetStringList.of("Alice", "Bob")));
+			waitOn(invocations.count.waitValue(1));
 			TestMethodInvocation invocation = invocations.poll();
-			assertEquals(Map.of(
-				"whom", "GADP",
-				"others", TargetStringList.of("Alice", "Bob")),
+			assertEquals(Map.of("whom", "GADP", "others", TargetStringList.of("Alice", "Bob")),
 				invocation.args);
 			invocation.complete(42);
 			int result = (Integer) waitOn(future);
@@ -600,7 +775,7 @@ public class GadpClientServerTest {
 	@Test
 	public void testInvokeMethodCached() throws Throwable {
 		// TODO: Disambiguate / deconflict these two "method" cases
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		try (AsynchronousSocketChannel socket = socketChannel();
 				ServerRunner runner = new ServerRunner()) {
 			MonitoredAsyncByteChannel monitored = new MonitoredAsyncByteChannel(socket);
 			GadpClient client = new GadpClient("Test", monitored);
@@ -615,16 +790,26 @@ public class GadpClientServerTest {
 			 * attributes are fetched the first time.
 			 */
 			Map<String, ?> attrs = waitOn(avail.fetchAttributes());
-			TargetObjectRef methodRef = (TargetObjectRef) attrs.get("greet");
-			TargetMethod<?> method = waitOn(methodRef.as(TargetMethod.tclass).fetch());
+			TargetMethod method = (TargetMethod) attrs.get("greet");
 			assertNotNull(method);
+			CompletableFuture<?> future1 = avail.fetchAttribute("greet(World)");
+
+			waitOn(invocations.count.waitValue(1));
+			TestMethodInvocation invocation1 = invocations.poll();
+			assertEquals(Map.of("arg", "World"), invocation1.args);
+			invocation1.complete("Hello, World!");
+			assertEquals("Hello, World!", waitOn(future1));
+			// Should not have to wait
 			assertEquals("Hello, World!", waitOn(avail.fetchAttribute("greet(World)")));
-			runner.server.model.session.available.punct = '?';
-			assertEquals("Hello, World!", waitOn(avail.fetchAttribute("greet(World)")));
+			assertEquals(0, invocations.count.get().intValue());
 
 			// Flush the cache
 			waitOn(avail.fetchAttributes(true));
-			assertEquals("Hello, World?", waitOn(avail.fetchAttribute("greet(World)")));
+			CompletableFuture<?> future2 = avail.fetchAttribute("greet(World)");
+			waitOn(invocations.count.waitValue(1));
+			TestMethodInvocation invocation2 = invocations.poll();
+			invocation2.complete("Hello, World?");
+			assertEquals("Hello, World?", waitOn(future2));
 
 			waitOn(client.close());
 		}
@@ -632,24 +817,21 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testListRoot() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
-			Map<String, ? extends TargetObjectRef> elements =
+			Map<String, ? extends TargetObject> elements =
 				waitOn(client.fetchObjectElements(List.of()));
 			assertEquals(0, elements.size());
 			Map<String, ?> attributes = waitOn(client.fetchObjectAttributes(List.of()));
-			assertEquals(Set.of(
-				"Processes", "Available",
-				TargetObject.DISPLAY_ATTRIBUTE_NAME,
-				TargetObject.UPDATE_MODE_ATTRIBUTE_NAME),
-				attributes.keySet());
+			assertEquals(Set.of("Processes", "Available", TargetObject.DISPLAY_ATTRIBUTE_NAME,
+				TargetFocusScope.FOCUS_ATTRIBUTE_NAME), attributes.keySet());
 			Object procContAttr = attributes.get("Processes");
-			TargetObjectRef procContRef = (TargetObjectRef) procContAttr;
-			assertEquals(List.of("Processes"), procContRef.getPath());
+			TargetObject procCont = (TargetObject) procContAttr;
+			assertEquals(List.of("Processes"), procCont.getPath());
 			waitOn(client.close());
 		}
 		finally {
@@ -659,7 +841,7 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testLaunch() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -667,7 +849,7 @@ public class GadpClientServerTest {
 			waitOn(client.connect());
 			TargetObject procCont = waitOn(client.fetchModelObject(List.of("Processes")));
 			assertTrue(procCont.getInterfaceNames().contains("Launcher"));
-			TargetLauncher<?> launcher = procCont.as(TargetLauncher.tclass);
+			TargetLauncher launcher = procCont.as(TargetLauncher.class);
 			waitOn(launcher.launch(
 				Map.of(TargetCmdLineLauncher.CMDLINE_ARGS_NAME, "/bin/echo Hello, World!")));
 			waitOn(client.close());
@@ -686,14 +868,14 @@ public class GadpClientServerTest {
 		List<ElementsChangedInvocation> invocations = new ArrayList<>();
 		// Any listener which calls .get on a child ref would do....
 		// This object-getting listener is the pattern that revealed this problem, though.
-		TargetObjectListener listener = new TargetObjectFetchingListener() {
+		DebuggerModelListener listener = new DebuggerModelListener() {
 			@Override
-			public void elementsChangedObjects(TargetObject parent, Collection<String> removed,
+			public void elementsChanged(TargetObject parent, Collection<String> removed,
 					Map<String, ? extends TargetObject> added) {
 				invocations.add(new ElementsChangedInvocation(parent, removed, added));
 			}
 		};
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -701,7 +883,7 @@ public class GadpClientServerTest {
 			waitOn(client.connect());
 			TargetObject avail = waitOn(client.fetchModelObject(List.of("Available")));
 			avail.addListener(listener);
-			Map<String, ? extends TargetObjectRef> elements = waitOn(avail.fetchElements());
+			Map<String, ? extends TargetObject> elements = waitOn(avail.fetchElements());
 			Msg.debug(this, "Elements: " + elements);
 			waitOn(client.close());
 		}
@@ -717,16 +899,17 @@ public class GadpClientServerTest {
 
 		CompletableFuture<List<String>> focusPath = new CompletableFuture<>();
 		AtomicBoolean failed = new AtomicBoolean();
-		TargetFocusScopeListener focusListener = new TargetFocusScopeListener() {
-			@Override
-			public void focusChanged(TargetFocusScope<?> object, TargetObjectRef focused) {
-				Msg.info(this, "Focus changed to " + focused);
-				if (!focusPath.complete(focused.getPath())) {
-					failed.set(true);
+		DebuggerModelListener focusListener =
+			new AnnotatedDebuggerAttributeListener(MethodHandles.lookup()) {
+				@AttributeCallback(TargetFocusScope.FOCUS_ATTRIBUTE_NAME)
+				public void focusChanged(TargetObject object, TargetObject focused) {
+					Msg.info(this, "Focus changed to " + focused);
+					if (!focusPath.complete(focused.getPath())) {
+						failed.set(true);
+					}
 				}
-			}
-		};
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+			};
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -736,16 +919,16 @@ public class GadpClientServerTest {
 			session.addListener(focusListener);
 			TargetObject procCont = waitOn(client.fetchModelObject(List.of("Processes")));
 			assertTrue(procCont.getInterfaceNames().contains("Launcher"));
-			TargetLauncher<?> launcher = procCont.as(TargetLauncher.tclass);
+			TargetLauncher launcher = procCont.as(TargetLauncher.class);
 			waitOn(launcher.launch(
 				Map.of(TargetCmdLineLauncher.CMDLINE_ARGS_NAME, "/bin/echo Hello, World!")));
 			launches.clear(); // Don't care. Just free it up.
 			Map<String, ?> attrs = waitOn(client.fetchObjectAttributes(List.of()));
 			assertTrue(attrs.containsKey(TargetFocusScope.FOCUS_ATTRIBUTE_NAME));
-			TargetObjectRef ref =
-				(TargetObjectRef) attrs.get(TargetFocusScope.FOCUS_ATTRIBUTE_NAME);
+			TargetObject focus = (TargetObject) attrs.get(TargetFocusScope.FOCUS_ATTRIBUTE_NAME);
 			// NOTE: Could be actual object, but need not be
-			assertEquals(List.of("Processes", "[0]"), ref.getPath());
+			assertEquals(List.of("Processes", "[0]"), focus.getPath());
+			waitOn(focusPath);
 			waitOn(client.close());
 
 			assertFalse(failed.get());
@@ -758,7 +941,7 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testSubscribeNoSuchPath() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -775,7 +958,7 @@ public class GadpClientServerTest {
 	public void testSubscribeLaunchForChildrenChanged() throws Throwable {
 		ElementsChangedListener elemL = new ElementsChangedListener();
 
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 
@@ -785,7 +968,7 @@ public class GadpClientServerTest {
 			TargetObject procContainer = waitOn(client.fetchModelObject(List.of("Processes")));
 			assertTrue(procContainer.getInterfaceNames().contains("Launcher"));
 			procContainer.addListener(elemL);
-			TargetLauncher<?> launcher = procContainer.as(TargetLauncher.tclass);
+			TargetLauncher launcher = procContainer.as(TargetLauncher.class);
 			waitOn(launcher.launch(
 				Map.of(TargetCmdLineLauncher.CMDLINE_ARGS_NAME, "/bin/echo Hello, World!")));
 			waitOn(elemL.count.waitValue(1));
@@ -797,8 +980,7 @@ public class GadpClientServerTest {
 			assertEquals(procContainer, eci.parent);
 			assertEquals(List.of(), List.copyOf(eci.removed));
 			assertEquals(1, eci.added.size());
-			Entry<String, ? extends TargetObjectRef> ent =
-				eci.added.entrySet().iterator().next();
+			Entry<String, ? extends TargetObject> ent = eci.added.entrySet().iterator().next();
 			assertEquals("0", ent.getKey());
 			assertEquals(List.of("Processes", "[0]"), ent.getValue().getPath());
 		}
@@ -812,54 +994,52 @@ public class GadpClientServerTest {
 		ElementsChangedListener elemL = new ElementsChangedListener();
 		InvalidatedListener invL = new InvalidatedListener();
 
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		try (AsynchronousSocketChannel socket = socketChannel();
 				ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
 
-			TargetObject availCont =
-				waitOn(client.fetchModelObject(PathUtils.parse("Available")));
-			availCont.addListener(elemL);
-			Map<String, ? extends TargetObject> avail1 = waitOn(availCont.fetchElements()
-					.thenCompose(DebugModelConventions::fetchAll));
-			assertEquals(2, avail1.size());
-			for (TargetObject a : avail1.values()) {
-				assertTrue(a.isValid());
-				a.addListener(invL);
-			}
+			populateAvailableAndSync(client, runner);
+			TargetObject availCont = client.getModelObject(PathUtils.parse("Available"));
 
+			client.addModelListener(elemL);
+			client.addModelListener(invL);
+
+			Map<String, ? extends TargetObject> avail1 = availCont.getCachedElements();
 			elemL.clear();
 			TestGadpTargetAvailableContainer ssAvail = runner.server.model.session.available;
-			ssAvail.setElements(List.of(
-				new TestGadpTargetAvailable(ssAvail, 1, "cat") //
+			ssAvail.setElements(List.of(new TestGadpTargetAvailable(ssAvail, 1, "cat") //
 			), "Changed");
 
-			waitOn(invL.count.waitValue(2));
-			waitOn(elemL.count.waitValue(1));
+			waitOn(invL.count.waitUntil(c -> c >= 2));
+			waitOn(elemL.count.waitUntil(c -> c >= 2));
 
 			for (TargetObject a : avail1.values()) {
 				assertFalse(a.isValid());
 			}
 
-			assertEquals(1, availCont.getCachedElements().size());
-			Map<String, ? extends TargetObject> avail2 = waitOn(availCont.fetchElements()
-					.thenCompose(DebugModelConventions::fetchAll));
+			Map<String, ? extends TargetObject> avail2 = availCont.getCachedElements();
 			assertEquals(1, avail2.size());
 			assertEquals("cat", avail2.get("1").getCachedAttribute("cmd"));
 
+			ElementsChangedInvocation removed = elemL.invocations.remove();
+			assertSame(availCont, removed.parent);
+			assertEquals(Map.of(), removed.added);
+			assertEquals(Set.of("1"), Set.copyOf(removed.removed));
+
 			ElementsChangedInvocation changed = Unique.assertOne(elemL.invocations);
 			assertSame(availCont, changed.parent);
-			// Use equals here, since the listener only gets the ref
-			assertEquals(avail2.get("1"), Unique.assertOne(changed.added.values()));
+			assertEquals(Set.of("1"), changed.added.keySet());
+			assertEquals(Set.of("2"), Set.copyOf(changed.removed));
+			assertSame(avail2.get("1"), Unique.assertOne(changed.added.values()));
 
 			Map<ID<TargetObject>, String> actualInv = invL.invocations.stream()
 					.collect(Collectors.toMap(ii -> ID.of(ii.object), ii -> ii.reason));
 			Map<ID<TargetObject>, String> expectedInv =
-				avail1.values()
-						.stream()
-						.collect(Collectors.toMap(o -> ID.of(o), o -> "Changed"));
+				Map.ofEntries(Map.entry(ID.of(avail1.get("1")), "Replaced"),
+					Map.entry(ID.of(avail1.get("2")), "Changed"));
 			assertEquals(expectedInv, actualInv);
 		}
 	}
@@ -868,7 +1048,7 @@ public class GadpClientServerTest {
 	public void testReplaceAttribute() throws Throwable {
 		AttributesChangedListener attrL = new AttributesChangedListener();
 
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		try (AsynchronousSocketChannel socket = socketChannel();
 				ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
@@ -878,32 +1058,25 @@ public class GadpClientServerTest {
 			TargetObject echoAvail =
 				waitOn(client.fetchModelObject(PathUtils.parse("Available[1]")));
 			echoAvail.addListener(attrL);
-			assertEquals(Map.of(
-				"pid", 1,
-				"cmd", "echo" //
-			), waitOn(echoAvail.fetchAttributes()));
+			assertEquals(Map.ofEntries(Map.entry("pid", 1), Map.entry("cmd", "echo"),
+				Map.entry("_display", "[1]")), waitOn(echoAvail.fetchAttributes()));
 
 			TestGadpTargetAvailable ssEchoAvail =
 				runner.server.model.session.available.getCachedElements().get("1");
 
-			ssEchoAvail.setAttributes(Map.of(
-				"cmd", "echo",
-				"args", "Hello, World!" //
-			), "Changed");
+			ssEchoAvail.changeAttributes(List.of("pid"),
+				Map.ofEntries(Map.entry("cmd", "echo"), Map.entry("args", "Hello, World!")),
+				"Changed");
 
 			waitOn(attrL.count.waitValue(1));
 
-			assertEquals(Map.of(
-				"cmd", "echo",
-				"args", "Hello, World!" //
-			), echoAvail.getCachedAttributes());
+			assertEquals(Map.ofEntries(Map.entry("cmd", "echo"), Map.entry("args", "Hello, World!"),
+				Map.entry("_display", "[1]")), echoAvail.getCachedAttributes());
 
 			AttributesChangedInvocation changed = Unique.assertOne(attrL.invocations);
 			assertSame(echoAvail, changed.parent);
 			assertEquals(Set.of("pid"), Set.copyOf(changed.removed));
-			assertEquals(Map.of(
-				"args", "Hello, World!" //
-			), changed.added);
+			assertEquals(Map.ofEntries(Map.entry("args", "Hello, World!")), changed.added);
 		}
 	}
 
@@ -911,21 +1084,16 @@ public class GadpClientServerTest {
 	public void testSubtreeInvalidationDeduped() throws Throwable {
 		InvalidatedListener invL = new InvalidatedListener();
 
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		try (AsynchronousSocketChannel socket = socketChannel();
 				ServerRunner runner = new ServerRunner()) {
 			MonitoredGadpClient client = new MonitoredGadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
 
-			TargetObject availCont =
-				waitOn(client.fetchModelObject(PathUtils.parse("Available")));
-			availCont.addListener(invL);
-			for (TargetObject avail : waitOn(availCont.fetchElements()
-					.thenCompose(DebugModelConventions::fetchAll)).values()) {
-				avail.addListener(invL);
-			}
+			populateAvailableAndSync(client, runner);
 
+			client.addModelListener(invL);
 			client.getMessageChannel().clear();
 			runner.server.model.session.changeAttributes(List.of("Available"), Map.of(), "Clear");
 
@@ -933,115 +1101,131 @@ public class GadpClientServerTest {
 			 * Yes, should see all invalidations for the user side, but only one message should be
 			 * sent, for the root of the invalidated sub tree
 			 */
-			waitOn(invL.count.waitValue(3));
-			// NB. will not see attribute change, since not subscribed to root
+			waitOn(invL.count.waitValue(4)); // NB: Available + {[1],[2],.greet}
+			// NB. Expect single invalidation message, followed by invalidation message
 			waitOn(client.getMessageChannel().count.waitUntil(v -> v >= 1));
 
 			assertEquals(Gadp.RootMessage.newBuilder()
 					.setEventNotification(Gadp.EventNotification.newBuilder()
-							.setPath(Gadp.Path.newBuilder()
-									.addAllE(List.of("Available")))
-							.setObjectInvalidateEvent(Gadp.ObjectInvalidateEvent.newBuilder()
-									.setReason("Clear")))
+							.setPath(Gadp.Path.newBuilder().addAllE(List.of("Available")))
+							.setObjectInvalidateEvent(
+								Gadp.ObjectInvalidateEvent.newBuilder().setReason("Clear")))
 					.build(),
 				client.getMessageChannel().record.get(0).assertReceived());
 		}
+	}
+
+	protected void populateAvailableAndSync(DebuggerObjectModel client, ServerRunner runner)
+			throws Throwable {
+		// Cause these to exist
+		client.fetchModelValue(PathUtils.parse("Available[1]"));
+		client.fetchModelValue(PathUtils.parse("Available[2]"));
+		Map<String, String> initEntries = Map.ofEntries(Map.entry("args", "Init"));
+		var syncL = new DebuggerModelListener() {
+			CompletableFuture<?> here = new CompletableFuture<>();
+			CompletableFuture<?> init = new CompletableFuture<>();
+
+			@Override
+			public void attributesChanged(TargetObject object, Collection<String> removed,
+					Map<String, ?> added) {
+				if ("Available[1]".equals(object.getJoinedPath("."))) {
+					if (added.entrySet().containsAll(initEntries.entrySet())) {
+						init.complete(null);
+					}
+				}
+			}
+
+			@Override
+			public void elementsChanged(TargetObject object, Collection<String> removed,
+					Map<String, ? extends TargetObject> added) {
+				for (TargetObject obj : added.values()) {
+					if ("Available[1]".equals(obj.getJoinedPath("."))) {
+						here.complete(null);
+					}
+				}
+			}
+		};
+		client.addModelListener(syncL, true);
+
+		waitOn(syncL.here);
+		TestGadpTargetAvailable ssAvail1 =
+			runner.server.model.session.available.getCachedElements().get("1");
+		ssAvail1.changeAttributes(List.of(), initEntries, "Changed");
+		waitOn(syncL.init);
+
+		client.removeModelListener(syncL);
 	}
 
 	@Test
 	public void testNoEventsAfterInvalidated() throws Throwable {
 		AttributesChangedListener attrL = new AttributesChangedListener();
 
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		try (AsynchronousSocketChannel socket = socketChannel();
 				ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
 
-			TargetObject echoAvail =
-				waitOn(client.fetchModelObject(PathUtils.parse("Available[1]")));
-			echoAvail.addListener(attrL);
-			assertEquals(Map.of(
-				"pid", 1,
-				"cmd", "echo" //
-			), waitOn(echoAvail.fetchAttributes()));
+			client.addModelListener(attrL);
 
-			TargetObject ddAvail = waitOn(client.fetchModelObject(PathUtils.parse("Available[2]")));
-			ddAvail.addListener(attrL);
-			assertEquals(Map.of(
-				"pid", 2,
-				"cmd", "dd" //
-			), waitOn(ddAvail.fetchAttributes()));
-
+			populateAvailableAndSync(client, runner);
 			// NB: copy
 			Map<String, TestGadpTargetAvailable> ssAvail =
 				runner.server.model.session.available.getCachedElements();
+			TestGadpTargetAvailable ssAvail1 = ssAvail.get("1");
+			TestGadpTargetAvailable ssAvail2 = ssAvail.get("2");
 
+			// Now, begin the actual test
+			var invL = new DebuggerModelListener() {
+				CompletableFuture<?> gone = new CompletableFuture<>();
+
+				@Override
+				public void invalidated(TargetObject object, TargetObject branch, String reason) {
+					if ("Available[1]".equals(object.getJoinedPath("."))) {
+						gone.complete(null);
+					}
+				}
+			};
+			client.addModelListener(invL, true);
 			runner.server.model.session.available.changeElements(List.of("1"), List.of(), Map.of(),
 				"1 is Gone");
+			waitOn(invL.gone);
+			attrL.clear();
+
 			// Should produce nothing
-			(ssAvail.get("1")).setAttributes(List.of(), Map.of(
-				"cmd", "echo",
-				"args", "Hello, World!"),
-				"Changed");
+			ssAvail1.changeAttributes(List.of(),
+				Map.ofEntries(Map.entry("args", "Hello, World!")), "Changed");
 			// Produce something, so we know we didn't get the other thing
-			(ssAvail.get("2")).changeAttributes(List.of(), List.of(), Map.of(
-				"args", "if=/dev/null"),
-				"Observe");
+			Map<String, String> expectedEntries = Map.ofEntries(Map.entry("args", "if=/dev/null"));
+			ssAvail2.changeAttributes(List.of(), List.of(), expectedEntries, "Observe");
 
 			waitOn(attrL.count.waitValue(1));
 
 			AttributesChangedInvocation changed = Unique.assertOne(attrL.invocations);
-			assertSame(ddAvail, changed.parent);
+			assertEquals("Available[2]", changed.parent.getJoinedPath("."));
 			assertEquals(Set.of(), Set.copyOf(changed.removed));
-			assertEquals(Map.of(
-				"args", "if=/dev/null" //
-			), changed.added);
+			assertEquals(expectedEntries, changed.added);
 		}
 	}
 
 	@Test
-	public void testProxyWithLinkedElementsCanonicalFirst() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+	public void testProxyWithLinkedElements() throws Throwable {
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
+			TargetObjectAddedWaiter waiter = new TargetObjectAddedWaiter(client);
 			runner.server.model.session.addLinks();
 			TargetObject canonical =
-				waitOn(client.fetchModelObject(PathUtils.parse("Available[2]")));
-			TargetObject link =
-				waitOn(client.fetchModelObject(PathUtils.parse("Links[1]")));
+				(TargetObject) waitOn(waiter.wait(PathUtils.parse("Available[2]")));
+			TargetObject link = (TargetObject) waitOn(waiter.wait(PathUtils.parse("Links[1]")));
 			assertSame(canonical, link);
 			assertEquals(PathUtils.parse("Available[2]"), link.getPath());
 			waitOn(client.close());
-		}
-		finally {
-			socket.close();
-		}
-	}
-
-	@Test
-	public void testProxyWithLinkedElementsLinkFirst() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
-		try (ServerRunner runner = new ServerRunner()) {
-			GadpClient client = new GadpClient("Test", socket);
-			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
-				runner.server.getLocalAddress()));
-			waitOn(client.connect());
-			runner.server.model.session.addLinks();
-			TargetObjectRef linkRef =
-				(TargetObjectRef) waitOn(client.fetchModelValue(PathUtils.parse("Links[1]")));
-			assertFalse(linkRef instanceof TargetObject);
-			TargetObject link =
-				waitOn(client.fetchModelObject(PathUtils.parse("Links[1]")));
-			TargetObject canonical =
-				waitOn(client.fetchModelObject(PathUtils.parse("Available[2]")));
-			assertSame(canonical, link);
-			assertEquals(PathUtils.parse("Available[2]"), link.getPath());
-			waitOn(client.close());
+			waiter.close();
 		}
 		finally {
 			socket.close();
@@ -1050,79 +1234,256 @@ public class GadpClientServerTest {
 
 	@Test
 	public void testFetchModelValueFollowsLink() throws Throwable {
-		AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
+		AsynchronousSocketChannel socket = socketChannel();
 		try (ServerRunner runner = new ServerRunner()) {
 			GadpClient client = new GadpClient("Test", socket);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
+			TargetObjectAddedWaiter waiter = new TargetObjectAddedWaiter(client);
 			runner.server.model.session.addLinks();
+			waitOn(waiter.wait(PathUtils.parse("Links[2]")));
 			assertEquals("echo", waitOn(client.fetchModelValue(PathUtils.parse("Links[2].cmd"))));
 			waitOn(client.close());
+			waiter.close();
 		}
 		finally {
 			socket.close();
 		}
 	}
 
-	@Test
-	@Ignore("TODO")
-	public void testCachingWithLinks() throws Throwable {
+	public static class EventListener implements DebuggerModelListener {
+		public static class CallEntry {
+			public final String methodName;
+			public final List<Object> args;
 
-		try (AsynchronousSocketChannel socket = AsynchronousSocketChannel.open();
-				ServerRunner runner = new ServerRunner()) {
-			MonitoredGadpClient client = new MonitoredGadpClient("Test", socket);
+			public CallEntry(String methodName, List<Object> args) {
+				this.methodName = methodName;
+				this.args = args;
+			}
+
+			@Override
+			public String toString() {
+				return String.format("<CallEntry %s(%s)>", methodName, args);
+			}
+
+			@Override
+			public int hashCode() {
+				return Objects.hash(methodName, args);
+			}
+
+			@Override
+			public boolean equals(Object obj) {
+				if (this == obj) {
+					return true;
+				}
+				if (!(obj instanceof CallEntry)) {
+					return false;
+				}
+				CallEntry that = (CallEntry) obj;
+				if (!Objects.equals(this.methodName, that.methodName)) {
+					return false;
+				}
+				if (!Objects.equals(this.args, that.args)) {
+					return false;
+				}
+				return true;
+			}
+		}
+
+		public final List<CallEntry> record = new ArrayList<>();
+
+		@Override
+		public void created(TargetObject object) {
+			record.add(new CallEntry("created", List.of(object)));
+		}
+
+		@Override
+		public void attributesChanged(TargetObject parent, Collection<String> removed,
+				Map<String, ?> added) {
+			record.add(new CallEntry("attributesChanged", List.of(parent, removed, added)));
+		}
+
+		@Override
+		public void elementsChanged(TargetObject parent, Collection<String> removed,
+				Map<String, ? extends TargetObject> added) {
+			record.add(new CallEntry("elementsChanged", List.of(parent, removed, added)));
+		}
+
+		@Override
+		public void rootAdded(TargetObject root) {
+			record.add(new CallEntry("rootAdded", List.of(root)));
+		}
+	}
+
+	@Test
+	public void testConnectBeforeRootCreated() throws Throwable {
+		AsynchronousSocketChannel socket = socketChannel();
+		try (ServerRunner runner = new ServerRunner() {
+			@Override
+			protected TestGadpServer createServer(SocketAddress addr) throws IOException {
+				return new TestGadpServer(new TestGadpObjectModel(false), addr);
+			}
+		}) {
+			GadpClient client = new PrintingGadpClient("Test", socket);
+			EventListener listener = new EventListener();
+			client.addModelListener(listener, true);
 			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
 				runner.server.getLocalAddress()));
 			waitOn(client.connect());
-			runner.server.model.session.addLinks();
 
-			client.getMessageChannel().clear();
-			assertEquals("echo", waitOn(client.fetchModelValue(PathUtils.parse("Links[2].cmd"))));
-			assertEquals(2, client.getMessageChannel().record.size());
-			assertEquals(Gadp.RootMessage.MsgCase.SUBSCRIBE_REQUEST,
-				client.getMessageChannel().record.get(0).assertSent().getMsgCase());
-			assertEquals(Gadp.RootMessage.MsgCase.SUBSCRIBE_REPLY,
-				client.getMessageChannel().record.get(1).assertReceived().getMsgCase());
+			DefaultTargetObject<?, ?> root =
+				new DefaultTargetModelRoot(runner.server.model, "Root");
+			DefaultTargetObject<?, ?> a =
+				new DefaultTargetObject<>(runner.server.model, root, "a", "A");
+			a.changeAttributes(List.of(), Map.of("test", 6), "Because");
+			root.changeAttributes(List.of(), List.of(a), Map.of(), "Because");
+			runner.server.model.addModelRoot(root);
+			waitOn(client.fetchModelRoot());
+			waitOn(client.flushEvents());
 
-			// Since I don't have the parent, as usual, no cache
-			client.getMessageChannel().clear();
-			assertEquals("echo", waitOn(client.fetchModelValue(PathUtils.parse("Links[2].cmd"))));
-			assertEquals(2, client.getMessageChannel().record.size());
+			assertEquals(List.of(new CallEntry("created", List.of(client.getModelRoot())),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelRoot(), Set.of(),
+						Map.ofEntries(Map.entry("_display", "<root>")))),
+				new CallEntry("created", List.of(client.getModelObject(PathUtils.parse("a")))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelObject(PathUtils.parse("a")), Set.of(),
+						Map.ofEntries(Map.entry("_display", "a")))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelObject(PathUtils.parse("a")), Set.of(),
+						Map.ofEntries(Map.entry("test", 6)))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelRoot(), Set.of(),
+						Map.ofEntries(
+							Map.entry("a", client.getModelObject(PathUtils.parse("a")))))),
+				new CallEntry("rootAdded", List.of(client.getModelRoot()))), listener.record);
+		}
+	}
 
-			/**
-			 * Now, fetch Links[2] first, and repeat the experiment It should still not use the
-			 * cache, because we won't know if Links[2] still points to Available[1]. Technically,
-			 * Available[1] is what will be cached. Index 2 of Links will not be cached until/if
-			 * Links is fetched.
-			 */
-			client.getMessageChannel().clear();
-			TargetObject avail1 = waitOn(client.fetchModelObject(PathUtils.parse("Links[2]")));
-			// Odd, but I believe it's correct since the first reply comes back with a ref
-			assertEquals(4, client.getMessageChannel().record.size());
-			assertNotNull(avail1);
-			client.getMessageChannel().clear();
-			assertEquals("echo", waitOn(client.fetchModelValue(PathUtils.parse("Links[2].cmd"))));
-			assertEquals(2, client.getMessageChannel().record.size());
-			client.getMessageChannel().clear();
-			assertEquals("echo", waitOn(client.fetchModelValue(PathUtils.parse("Links[2].cmd"))));
-			assertEquals(2, client.getMessageChannel().record.size());
+	@Test
+	public void testConnectBetweenRootCreatedAndAdded() throws Throwable {
+		AsynchronousSocketChannel socket = socketChannel();
+		try (ServerRunner runner = new ServerRunner() {
+			@Override
+			protected TestGadpServer createServer(SocketAddress addr) throws IOException {
+				return new TestGadpServer(new TestGadpObjectModel(false), addr);
+			}
+		}) {
+			GadpClient client = new PrintingGadpClient("Test", socket);
+			EventListener listener = new EventListener();
+			client.addModelListener(listener, true);
 
-			// Now, fetch Links, and its elements to ensure it is cached
-			TargetObject links = waitOn(client.fetchModelObject(PathUtils.parse("Links")));
-			assertSame(avail1, waitOn(links.fetchElement("2")));
+			DefaultTargetObject<?, ?> root =
+				new DefaultTargetModelRoot(runner.server.model, "Root");
+			DefaultTargetObject<?, ?> a =
+				new DefaultTargetObject<>(runner.server.model, root, "a", "A");
+			a.changeAttributes(List.of(), Map.of("test", 6), "Because");
 
-			client.getMessageChannel().clear();
-			assertSame(avail1, waitOn(links.fetchElement("2")));
-			assertEquals(2, client.getMessageChannel().record.size());
-			assertEquals("Links[2]", PathUtils.toString(client.getMessageChannel().record.get(0)
-					.assertSent()
-					.getSubscribeRequest()
-					.getPath()
-					.getEList()));
+			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
+				runner.server.getLocalAddress()));
+			waitOn(client.connect());
 
-			TODO();
-			waitOn(client.close());
+			root.changeAttributes(List.of(), List.of(a), Map.of(), "Because");
+			runner.server.model.addModelRoot(root);
+			waitOn(client.fetchModelRoot());
+			waitOn(client.flushEvents());
+
+			assertEquals(List.of(new CallEntry("created", List.of(client.getModelRoot())),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelRoot(), Set.of(),
+						Map.ofEntries(Map.entry("_display", "<root>")))),
+				new CallEntry("created", List.of(client.getModelObject(PathUtils.parse("a")))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelObject(PathUtils.parse("a")), Set.of(),
+						Map.ofEntries(Map.entry("_display", "a")))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelObject(PathUtils.parse("a")), Set.of(),
+						Map.ofEntries(Map.entry("test", 6)))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelRoot(), Set.of(),
+						Map.ofEntries(
+							Map.entry("a", client.getModelObject(PathUtils.parse("a")))))),
+				new CallEntry("rootAdded", List.of(client.getModelRoot()))), listener.record);
+		}
+	}
+
+	@Test
+	public void testConnectAfterRootAdded() throws Throwable {
+		AsynchronousSocketChannel socket = socketChannel();
+		try (ServerRunner runner = new ServerRunner() {
+			@Override
+			protected TestGadpServer createServer(SocketAddress addr) throws IOException {
+				return new TestGadpServer(new TestGadpObjectModel(false), addr);
+			}
+		}) {
+
+			GadpClient client = new PrintingGadpClient("Test", socket);
+			EventListener listener = new EventListener();
+			client.addModelListener(listener, true);
+
+			DefaultTargetObject<?, ?> root =
+				new DefaultTargetModelRoot(runner.server.model, "Root");
+			DefaultTargetObject<?, ?> a =
+				new DefaultTargetObject<>(runner.server.model, root, "a", "A");
+			a.changeAttributes(List.of(), Map.of("test", 6), "Because");
+			root.changeAttributes(List.of(), List.of(a), Map.of(), "Because");
+			runner.server.model.addModelRoot(root);
+			waitOn(runner.server.model.flushEvents());
+
+			waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
+				runner.server.getLocalAddress()));
+			waitOn(client.connect());
+			waitOn(client.fetchModelRoot());
+			waitOn(client.flushEvents());
+
+			assertEquals(List.of(new CallEntry("created", List.of(client.getModelRoot())),
+				new CallEntry("attributesChanged", List.of( // Defaults upon client-side construction
+					client.getModelRoot(), Set.of(),
+					Map.ofEntries(Map.entry("_display", "<root>")))),
+				new CallEntry("created", List.of(client.getModelObject(PathUtils.parse("a")))),
+				new CallEntry("attributesChanged", List.of( // Defaults
+					client.getModelObject(PathUtils.parse("a")), Set.of(),
+					Map.ofEntries(Map.entry("_display", "a")))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelObject(PathUtils.parse("a")), Set.of(),
+						Map.ofEntries(Map.entry("test", 6)))),
+				new CallEntry("attributesChanged",
+					List.of(client.getModelRoot(), Set.of(),
+						Map.ofEntries(
+							Map.entry("a", client.getModelObject(PathUtils.parse("a")))))),
+				new CallEntry("rootAdded", List.of(client.getModelRoot()))), listener.record);
+		}
+	}
+
+	@Test
+	public void testWriteConfigurationOption() throws Throwable {
+		AsynchronousSocketChannel socket = socketChannel();
+		try (ServerRunner runner = new ServerRunner()) {
+			GadpClient client = new PrintingGadpClient("Test", socket);
+
+			try (TargetObjectAddedWaiter waiter = new TargetObjectAddedWaiter(client)) {
+				waitOn(AsyncUtils.completable(TypeSpec.VOID, socket::connect,
+					runner.server.getLocalAddress()));
+				waitOn(client.connect());
+
+				TargetObject procs =
+					(TargetObject) waitOn(waiter.wait(PathUtils.parse("Processes")));
+				waitOn(((TargetConfigurable) procs).writeConfigurationOption(
+					TestGadpTargetProcessContainer.BASE_ATTRIBUTE_NAME, 8));
+				waitOn(((TargetLauncher) procs).launch(Map.ofEntries(Map.entry("pid", 1000L))));
+
+				TargetProcess p1000 =
+					(TargetProcess) waitOn(waiter.wait(PathUtils.parse("Processes[1000]")));
+
+				assertEquals("1750", p1000.getDisplay());
+
+				waitOn(((TargetConfigurable) procs).writeConfigurationOption(
+					TestGadpTargetProcessContainer.BASE_ATTRIBUTE_NAME, 10));
+
+				// NB. attribute change should arrive before completion of write
+				assertEquals("1000", p1000.getDisplay());
+			}
 		}
 	}
 }

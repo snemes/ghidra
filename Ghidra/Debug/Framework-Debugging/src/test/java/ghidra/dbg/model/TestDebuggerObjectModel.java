@@ -15,15 +15,17 @@
  */
 package ghidra.dbg.model;
 
+import java.io.IOException;
 import java.util.concurrent.*;
 
-import ghidra.dbg.agent.AbstractDebuggerObjectModel;
-import ghidra.dbg.attributes.TargetObjectRef;
+import org.jdom.JDOMException;
+
 import ghidra.dbg.target.TargetObject;
-import ghidra.program.model.address.*;
+import ghidra.dbg.target.schema.TargetObjectSchema;
+import ghidra.dbg.target.schema.XmlSchemaContext;
 
 // TODO: Refactor with other Fake and Test model stuff.
-public class TestDebuggerObjectModel extends AbstractDebuggerObjectModel {
+public class TestDebuggerObjectModel extends EmptyDebuggerObjectModel {
 	public static final String TEST_MODEL_STRING = "Test Model";
 	protected static final int DELAY_MILLIS = 250;
 
@@ -32,15 +34,23 @@ public class TestDebuggerObjectModel extends AbstractDebuggerObjectModel {
 		CompletableFuture.delayedExecutor(DELAY_MILLIS, TimeUnit.MILLISECONDS);
 
 	enum FutureMode {
-		SYNC, ASYNC, DELAYED;
+		ASYNC, DELAYED;
 	}
 
-	protected final AddressSpace ram =
-		new GenericAddressSpace("ram", 64, AddressSpace.TYPE_RAM, 0);
-	protected final AddressFactory factory = new DefaultAddressFactory(new AddressSpace[] { ram });
-	public final TestTargetSession session;
+	public static final XmlSchemaContext SCHEMA_CTX;
+	public static final TargetObjectSchema ROOT_SCHEMA;
+	static {
+		try {
+			SCHEMA_CTX = XmlSchemaContext.deserialize(
+				EmptyDebuggerObjectModel.class.getResourceAsStream("test_schema.xml"));
+			ROOT_SCHEMA = SCHEMA_CTX.getSchema(SCHEMA_CTX.name("Test"));
+		}
+		catch (IOException | JDOMException e) {
+			throw new AssertionError(e);
+		}
+	}
 
-	protected TestDebuggerObjectModel.FutureMode futureMode = FutureMode.SYNC;
+	public final TestTargetSession session;
 
 	protected int invalidateCachesCount;
 
@@ -48,8 +58,18 @@ public class TestDebuggerObjectModel extends AbstractDebuggerObjectModel {
 		this("Session");
 	}
 
+	public Executor getClientExecutor() {
+		return clientExecutor;
+	}
+
 	public TestDebuggerObjectModel(String rootHint) {
-		this.session = new TestTargetSession(this, rootHint);
+		this.session = new TestTargetSession(this, rootHint, ROOT_SCHEMA);
+		addModelRoot(session);
+	}
+
+	@Override
+	public TargetObjectSchema getRootSchema() {
+		return ROOT_SCHEMA;
 	}
 
 	@Override
@@ -57,20 +77,15 @@ public class TestDebuggerObjectModel extends AbstractDebuggerObjectModel {
 		return TEST_MODEL_STRING;
 	}
 
-	@Override
+	@Override // TODO: Give test writer control of addModelRoot
 	public CompletableFuture<? extends TargetObject> fetchModelRoot() {
 		return future(session);
 	}
 
 	@Override
-	public AddressFactory getAddressFactory() {
-		return factory;
-	}
-
-	@Override
 	public CompletableFuture<Void> close() {
-		session.invalidateSubtree("Model closed");
-		return future(null);
+		session.invalidateSubtree(session, "Model closed");
+		return future(null).thenCompose(__ -> super.close());
 	}
 
 	public TestTargetProcess addProcess(int pid) {
@@ -78,27 +93,11 @@ public class TestDebuggerObjectModel extends AbstractDebuggerObjectModel {
 	}
 
 	public <T> CompletableFuture<T> future(T t) {
-		switch (futureMode) {
-			case SYNC:
-				return CompletableFuture.completedFuture(t);
-			case ASYNC:
-				return CompletableFuture.supplyAsync(() -> t);
-			case DELAYED:
-				return CompletableFuture.supplyAsync(() -> t, DELAYED_EXECUTOR);
-		}
-		throw new AssertionError();
+		return CompletableFuture.supplyAsync(() -> t, getClientExecutor());
 	}
 
-	public CompletableFuture<Void> requestFocus(TargetObjectRef obj) {
+	public CompletableFuture<Void> requestFocus(TargetObject obj) {
 		return session.requestFocus(obj);
-	}
-
-	public Address addr(long off) {
-		return ram.getAddress(off);
-	}
-
-	public AddressRange range(long min, long max) {
-		return new AddressRangeImpl(addr(min), addr(max));
 	}
 
 	@Override

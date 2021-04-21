@@ -26,10 +26,9 @@ import org.junit.Test;
 
 import ghidra.app.plugin.core.debug.gui.objects.components.*;
 import ghidra.app.plugin.core.debug.service.model.DebuggerModelServiceProxyPlugin;
-import ghidra.dbg.attributes.TypedTargetObjectRef;
 import ghidra.dbg.model.*;
 import ghidra.dbg.target.*;
-import ghidra.dbg.util.DebuggerModelTestUtils;
+import ghidra.dbg.testutil.DebuggerModelTestUtils;
 import ghidra.util.Swing;
 import help.screenshot.GhidraScreenShotGenerator;
 
@@ -51,12 +50,8 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 	// A cheap way to control what buttons are enabled
 	static class ActionyTestTargetObject
 			extends DefaultTestTargetObject<TestTargetObject, TestTargetObject>
-			implements TargetInterpreter<ActionyTestTargetObject>,
-			TargetResumable<ActionyTestTargetObject>,
-			TargetSteppable<ActionyTestTargetObject>,
-			TargetLauncher<ActionyTestTargetObject>,
-			TargetAttacher<ActionyTestTargetObject>,
-			TargetAttachable<ActionyTestTargetObject> {
+			implements TargetInterpreter, TargetResumable, TargetSteppable, TargetLauncher,
+			TargetAttacher, TargetAttachable {
 
 		public ActionyTestTargetObject(TestTargetObject parent, String name, String typeHint) {
 			super(parent, name, typeHint);
@@ -68,8 +63,7 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 		}
 
 		@Override
-		public CompletableFuture<Void> attach(
-				TypedTargetObjectRef<? extends TargetAttachable<?>> ref) {
+		public CompletableFuture<Void> attach(TargetAttachable attachable) {
 			return TODO();
 		}
 
@@ -111,11 +105,6 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 	@Test
 	public void testCaptureDebuggerObjectsPlugin() throws Throwable {
 		mb.createTestModel("Debugger");
-		mb.testModel.session.setAttributes(List.of(), Map.of(
-			TargetEventScope.EVENT_PROCESS_ATTRIBUTE_NAME, "1a12", // Get arrow icon on process
-			TargetEventScope.EVENT_THREAD_ATTRIBUTE_NAME, "1a34", // Get arrow icon on thread
-			TargetObject.DISPLAY_ATTRIBUTE_NAME, "Debugger"),
-			"TestOverride");
 
 		DefaultTestTargetObject<?, ?> available =
 			new DefaultTestTargetObject<>(mb.testModel.session, "Available", "");
@@ -141,8 +130,7 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 			new DefaultTestTargetObject<>(process1a12, "Devices", "");
 		DefaultTestTargetObject<?, ?> pEnvironment =
 			new DefaultTestTargetObject<>(process1a12, "Environment", "");
-		DefaultTestTargetObject<?, ?> pIo =
-			new DefaultTestTargetObject<>(process1a12, "Io", "");
+		DefaultTestTargetObject<?, ?> pIo = new DefaultTestTargetObject<>(process1a12, "Io", "");
 		DefaultTestTargetObject<?, ?> pMemory =
 			new DefaultTestTargetObject<>(process1a12, "Memory", "");
 		DefaultTestTargetObject<?, ?> pModules =
@@ -153,6 +141,11 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 		DefaultTestTargetObject<?, ?> thread1a34 =
 			new ActionyTestTargetObject(pThreads, "[0x1a34]", "");
 
+		mb.testModel.session.setAttributes(List.of(),
+			Map.of(TargetEventScope.EVENT_OBJECT_ATTRIBUTE_NAME, thread1a34, // Get arrow icon on thread
+				TargetObject.DISPLAY_ATTRIBUTE_NAME, "Debugger"),
+			"TestOverride");
+
 		DefaultTestTargetObject<?, ?> tEnvironment =
 			new DefaultTestTargetObject<>(thread1a34, "Environment", "");
 
@@ -161,80 +154,44 @@ public class DebuggerObjectsPluginScreenShots extends GhidraScreenShotGenerator
 
 		DefaultTestTargetObject<?, ?> activationContextStackPointer =
 			new DefaultTestTargetObject<>(teEnvBlock, "ActivationContextStackPointer", "");
-		activationContextStackPointer.setAttributes(List.of(), Map.of(
-			TargetObject.DISPLAY_ATTRIBUTE_NAME, "ActivationContextStackPointer : 789abc",
-			"_modified", true),
-			"Initialized");
+		activationContextStackPointer
+				.setAttributes(List.of(),
+					Map.of(TargetObject.DISPLAY_ATTRIBUTE_NAME,
+						"ActivationContextStackPointer : 789abc", "_modified", true),
+					"Initialized");
 		DefaultTestTargetObject<?, ?> activeFrame =
 			new DefaultTestTargetObject<>(teEnvBlock, "ActiveFrame", "");
-		activeFrame.setAttributes(List.of(), Map.of(
-			TargetObject.DISPLAY_ATTRIBUTE_NAME, "ActiveFrame : 0",
-			"_modified", true),
+		activeFrame.setAttributes(List.of(),
+			Map.of(TargetObject.DISPLAY_ATTRIBUTE_NAME, "ActiveFrame : 0", "_modified", true),
 			"Initialized");
 		DefaultTestTargetObject<?, ?> bogusFocus =
 			new DefaultTestTargetObject<>(teEnvBlock, "BOGUS FOCUS", "");
-		teEnvBlock.setAttributes(
-			List.of(
-				activationContextStackPointer,
-				activeFrame,
-				bogusFocus),
-			Map.of(
-				"_kind", "OBJECT_TARGET_OBJECT"), // Makes it magenta
+		teEnvBlock.setAttributes(List.of(activationContextStackPointer, activeFrame, bogusFocus),
+			Map.of("_kind", "OBJECT_TARGET_OBJECT"), // Makes it magenta
 			"Initialized");
 
-		tEnvironment.setAttributes(List.of(
-			teEnvBlock),
-			Map.of(), "Initialized");
+		tEnvironment.setAttributes(List.of(teEnvBlock), Map.of(), "Initialized");
 
-		thread1a34.setAttributes(
-			List.of(
-				tEnvironment),
-			Map.of(
-				TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x1a34"),
-			"Initialized");
+		thread1a34.setAttributes(List.of(tEnvironment),
+			Map.of(TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x1a34"), "Initialized");
 
-		pThreads.setElements(List.of(
-			thread1a34),
-			Map.of(), "Initialized");
+		pThreads.setElements(List.of(thread1a34), Map.of(), "Initialized");
 
 		process1a12.setAttributes(
-			List.of(
-				pDebug,
-				pDevices,
-				pEnvironment,
-				pIo,
-				pMemory,
-				pModules,
-				pThreads),
-			Map.of(
-				TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x1a12",
-				"Handle", "321",
-				"Id", "1a12",
+			List.of(pDebug, pDevices, pEnvironment, pIo, pMemory, pModules, pThreads),
+			Map.of(TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x1a12", "Handle", "321", "Id", "1a12",
 				"Name", "winmine.exe"),
 			"Initialized");
 
-		sProcesses.setElements(List.of(
-			process1a12),
-			Map.of(), "Initialized");
+		sProcesses.setElements(List.of(process1a12), Map.of(), "Initialized");
 
-		session0.setAttributes(
-			List.of(
-				sAttributes,
-				sDevices,
-				sProcesses),
-			Map.of(
-				TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x0",
-				"Id", 0),
+		session0.setAttributes(List.of(sAttributes, sDevices, sProcesses),
+			Map.of(TargetObject.DISPLAY_ATTRIBUTE_NAME, "0x0", "Id", 0), "Initialized");
+
+		sessions.setElements(List.of(session0), Map.of(), "Initialized");
+
+		mb.testModel.session.changeAttributes(List.of(), List.of(available, sessions), Map.of(),
 			"Initialized");
-
-		sessions.setElements(List.of(
-			session0),
-			Map.of(), "Initialized");
-
-		mb.testModel.session.changeAttributes(List.of(), List.of(
-			available,
-			sessions),
-			Map.of(), "Initialized");
 
 		Swing.runNow(() -> {
 			modelService.addModel(mb.testModel);

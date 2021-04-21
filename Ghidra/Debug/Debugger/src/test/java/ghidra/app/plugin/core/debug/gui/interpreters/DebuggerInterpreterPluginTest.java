@@ -29,8 +29,10 @@ import ghidra.app.plugin.core.debug.gui.AbstractGhidraHeadedDebuggerGUITest;
 import ghidra.app.plugin.core.interpreter.InterpreterComponentProvider;
 import ghidra.dbg.model.TestTargetInterpreter.ExecuteCall;
 import ghidra.dbg.target.TargetConsole.Channel;
+import ghidra.dbg.testutil.DebuggerModelTestUtils;
 
-public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerGUITest {
+public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerGUITest
+		implements DebuggerModelTestUtils {
 	private DebuggerInterpreterPlugin interpreterPlugin;
 
 	@Before
@@ -45,8 +47,7 @@ public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerG
 		InterpreterComponentProvider interpreter =
 			waitForComponentProvider(InterpreterComponentProvider.class);
 
-		// TODO: Sub-title instead
-		assertEquals("Test Debugger", interpreter.getTitle());
+		assertEquals("Test Debugger", interpreter.getSubTitle());
 		assertTrue(interpreter.isVisible());
 	}
 
@@ -62,13 +63,14 @@ public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerG
 
 		// Can't get at the component, so send keystrokes?
 		Robot robot = new Robot();
-		robot.keyPress(KeyEvent.VK_A);
-		robot.keyRelease(KeyEvent.VK_A);
-		robot.keyPress(KeyEvent.VK_ENTER);
-		robot.keyRelease(KeyEvent.VK_ENTER);
-		waitForSwing();
-
-		ExecuteCall<Void> exe = mb.testModel.session.interpreter.pollExecute();
+		ExecuteCall<Void> exe = waitForValue(() -> {
+			robot.keyPress(KeyEvent.VK_A);
+			robot.keyRelease(KeyEvent.VK_A);
+			robot.keyPress(KeyEvent.VK_ENTER);
+			robot.keyRelease(KeyEvent.VK_ENTER);
+			waitForSwing();
+			return mb.testModel.session.interpreter.pollExecute();
+		});
 		assertEquals("a", exe.cmd);
 		exe.complete(null); // Not necessary, but cleaner
 	}
@@ -102,17 +104,17 @@ public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerG
 	}
 
 	@Test
-	public void testDisplayChangeUpdatesTitle() throws Exception {
+	public void testDisplayChangeUpdatesTitle() throws Throwable {
 		createTestModel();
 		interpreterPlugin.showConsole(mb.testModel.session.interpreter);
 		InterpreterComponentProvider interpreter =
 			waitForComponentProvider(InterpreterComponentProvider.class);
 
 		mb.testModel.session.interpreter.setDisplay("Test Debugger X.0");
+		waitOn(mb.testModel.flushEvents());
 		waitForSwing();
 
-		// TODO: Sub-title instead
-		assertEquals("Test Debugger X.0", interpreter.getTitle());
+		assertEquals("Test Debugger X.0", interpreter.getSubTitle());
 	}
 
 	@Test
@@ -127,7 +129,7 @@ public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerG
 		), Map.of(), "Invalidate interpreter");
 		waitForSwing();
 
-		assertFalse(interpreter.isVisible());
+		waitForPass(() -> assertFalse(interpreter.isVisible()));
 		assertFalse(interpreter.isInTool());
 	}
 
@@ -145,6 +147,6 @@ public class DebuggerInterpreterPluginTest extends AbstractGhidraHeadedDebuggerG
 		), Map.of(), "Invalidate interpreter");
 		waitForSwing();
 
-		assertFalse(interpreter.isInputPermitted());
+		waitForPass(() -> assertFalse(interpreter.isInputPermitted()));
 	}
 }

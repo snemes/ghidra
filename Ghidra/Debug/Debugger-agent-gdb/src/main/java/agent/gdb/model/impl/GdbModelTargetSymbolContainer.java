@@ -16,29 +16,30 @@
 package agent.gdb.model.impl;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 import agent.gdb.manager.impl.GdbMinimalSymbol;
 import ghidra.dbg.agent.DefaultTargetObject;
+import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.target.TargetSymbolNamespace;
 import ghidra.dbg.target.schema.TargetAttributeType;
+import ghidra.dbg.target.schema.TargetObjectSchema.ResyncMode;
 import ghidra.dbg.target.schema.TargetObjectSchemaInfo;
-import ghidra.util.datastruct.WeakValueHashMap;
 
-@TargetObjectSchemaInfo(name = "SymbolContainer", attributes = {
-	@TargetAttributeType(type = Void.class)
-}, canonicalContainer = true)
+@TargetObjectSchemaInfo(
+	name = "SymbolContainer",
+	elementResync = ResyncMode.ONCE,
+	attributes = {
+		@TargetAttributeType(type = Void.class) },
+	canonicalContainer = true)
 public class GdbModelTargetSymbolContainer
 		extends DefaultTargetObject<GdbModelTargetSymbol, GdbModelTargetModule>
-		implements TargetSymbolNamespace<GdbModelTargetSymbolContainer> {
+		implements TargetSymbolNamespace {
 	public static final String NAME = "Symbols";
 
 	protected final GdbModelImpl impl;
 	protected final GdbModelTargetModule module;
-
-	protected final Map<String, GdbModelTargetSymbol> symbolsByName = new WeakValueHashMap<>();
 
 	public GdbModelTargetSymbolContainer(GdbModelTargetModule module) {
 		super(module.impl, module, NAME, "SymbolContainer");
@@ -57,14 +58,14 @@ public class GdbModelTargetSymbolContainer
 						.collect(Collectors.toList());
 			}
 			setElements(symbols, "Refreshed");
-			changeAttributes(List.of(), Map.of(
-				UPDATE_MODE_ATTRIBUTE_NAME, TargetUpdateMode.FIXED //
-			), "Refreshed");
 		});
 	}
 
 	protected synchronized GdbModelTargetSymbol getTargetSymbol(GdbMinimalSymbol symbol) {
-		return symbolsByName.computeIfAbsent(symbol.getName(),
-			n -> new GdbModelTargetSymbol(this, symbol));
+		TargetObject modelObject = impl.getModelObject(symbol);
+		if (modelObject != null) {
+			return (GdbModelTargetSymbol) modelObject;
+		}
+		return new GdbModelTargetSymbol(this, symbol);
 	}
 }

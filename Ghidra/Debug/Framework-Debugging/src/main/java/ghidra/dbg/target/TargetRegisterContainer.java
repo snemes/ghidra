@@ -20,23 +20,19 @@ import java.util.concurrent.CompletableFuture;
 
 import ghidra.dbg.DebugModelConventions;
 import ghidra.dbg.DebuggerTargetObjectIface;
+import ghidra.dbg.target.schema.TargetObjectSchema;
 
 /**
  * A container of register descriptions
+ * 
+ * <p>
+ * TODO: Remove this. It really doesn't add anything that can't be discovered via the schema. A
+ * client searching for a register (description) container should use
+ * {@link TargetObjectSchema#searchForCanonicalContainer(Class)}, or discover the bank first, and
+ * ask for its descriptions.
  */
 @DebuggerTargetObjectIface("RegisterContainer")
-public interface TargetRegisterContainer<T extends TargetRegisterContainer<T>>
-		extends TypedTargetObject<T> {
-	enum Private {
-		;
-		private abstract class Cls implements TargetRegisterContainer<Cls> {
-		}
-	}
-
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<Private.Cls> tclass = (Class) TargetRegisterContainer.class;
-	@SuppressWarnings({ "unchecked", "rawtypes" })
-	Class<TargetRegisterContainer<?>> wclass = (Class) TargetRegisterContainer.class;
+public interface TargetRegisterContainer extends TargetObject {
 
 	/**
 	 * Get the register descriptions in this container
@@ -50,8 +46,10 @@ public interface TargetRegisterContainer<T extends TargetRegisterContainer<T>>
 	 * @implNote By default, this method collects all successor registers ordered by path.
 	 *           Overriding that behavior is not yet supported.
 	 * @return the register descriptions
+	 * @deprecated I don't think this has any actual utility.
 	 */
-	default CompletableFuture<? extends Collection<? extends TargetRegister<?>>> getRegisters() {
-		return DebugModelConventions.collectSuccessors(this, TargetRegister.tclass);
+	@Deprecated(forRemoval = true)
+	default CompletableFuture<? extends Collection<? extends TargetRegister>> getRegisters() {
+		return DebugModelConventions.collectSuccessors(this, TargetRegister.class);
 	}
 }

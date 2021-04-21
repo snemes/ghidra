@@ -21,7 +21,6 @@ import java.util.concurrent.CompletableFuture;
 
 import ghidra.async.AsyncUtils;
 import ghidra.dbg.DebuggerObjectModel;
-import ghidra.dbg.attributes.TargetObjectRef;
 import ghidra.dbg.error.DebuggerModelTypeException;
 import ghidra.dbg.target.TargetObject;
 import ghidra.dbg.util.PathUtils;
@@ -38,12 +37,7 @@ public interface SpiDebuggerObjectModel extends DebuggerObjectModel {
 		return AsyncUtils.NIL;
 	}
 
-	@Override
-	default TargetObjectRef createRef(List<String> path) {
-		return new DefaultTargetObjectRef(this, path);
-	}
-
-	public default CompletableFuture<Object> fetchFreshChild(TargetObject obj, String key) {
+	public static CompletableFuture<Object> fetchFreshChild(TargetObject obj, String key) {
 		if (PathUtils.isIndex(key)) {
 			return obj.fetchElements(true).thenApply(elements -> {
 				return elements.get(PathUtils.parseIndex(key));
@@ -54,7 +48,7 @@ public interface SpiDebuggerObjectModel extends DebuggerObjectModel {
 		});
 	}
 
-	public default CompletableFuture<Object> fetchSuccessorValue(TargetObject obj,
+	public static CompletableFuture<Object> fetchSuccessorValue(TargetObject obj,
 			List<String> path, boolean refresh, boolean followLinks) {
 		if (path.isEmpty()) {
 			return CompletableFuture.completedFuture(obj);
@@ -71,29 +65,27 @@ public interface SpiDebuggerObjectModel extends DebuggerObjectModel {
 			if (c == null) {
 				return AsyncUtils.nil();
 			}
-			if (!(c instanceof TargetObjectRef)) {
+			if (!(c instanceof TargetObject)) {
 				if (path.size() == 1) {
 					return CompletableFuture.completedFuture(c);
 				}
 				else {
 					List<String> p = PathUtils.extend(obj.getPath(), key);
-					throw DebuggerModelTypeException.typeRequired(c, p, TargetObjectRef.class);
+					throw DebuggerModelTypeException.typeRequired(c, p, TargetObject.class);
 				}
 			}
-			TargetObjectRef childRef = (TargetObjectRef) c;
-			if (PathUtils.isLink(obj.getPath(), key, childRef.getPath()) && !followLinks) {
+			TargetObject child = (TargetObject) c;
+			if (PathUtils.isLink(obj.getPath(), key, child.getPath()) && !followLinks) {
 				if (path.size() == 1) {
 					return CompletableFuture.completedFuture(c);
 				}
 				else {
 					List<String> p = PathUtils.extend(obj.getPath(), key);
-					throw DebuggerModelTypeException.linkForbidden(childRef, p);
+					throw DebuggerModelTypeException.linkForbidden(child, p);
 				}
 			}
-			return childRef.fetch().thenCompose(childObj -> {
-				List<String> remains = path.subList(1, path.size());
-				return fetchSuccessorValue(childObj, remains, refresh, followLinks);
-			});
+			List<String> remains = path.subList(1, path.size());
+			return fetchSuccessorValue(child, remains, refresh, followLinks);
 		});
 	}
 
@@ -110,7 +102,7 @@ public interface SpiDebuggerObjectModel extends DebuggerObjectModel {
 	}
 
 	@Override
-	public default CompletableFuture<? extends Map<String, ? extends TargetObjectRef>> fetchObjectElements(
+	public default CompletableFuture<? extends Map<String, ? extends TargetObject>> fetchObjectElements(
 			List<String> path, boolean refresh) {
 		return fetchModelObject(path).thenCompose(obj -> {
 			if (obj == null) {

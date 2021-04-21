@@ -18,36 +18,36 @@ package agent.dbgeng.model.impl;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicReference;
 
 import agent.dbgeng.dbgeng.DebugThreadId;
 import agent.dbgeng.manager.*;
-import agent.dbgeng.manager.DbgManager.ExecSuffix;
-import agent.dbgeng.manager.cmd.DbgThreadSelectCommand;
+import agent.dbgeng.manager.cmd.DbgSetActiveThreadCommand;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.iface1.DbgModelTargetFocusScope;
 import agent.dbgeng.model.iface2.*;
-import ghidra.async.AsyncUtils;
-import ghidra.async.TypeSpec;
-import ghidra.dbg.DebugModelConventions;
 import ghidra.dbg.target.TargetEnvironment;
+import ghidra.dbg.target.TargetFocusScope;
 import ghidra.dbg.target.schema.*;
 import ghidra.dbg.util.PathUtils;
 
-@TargetObjectSchemaInfo(name = "Thread", elements = { //
-	@TargetElementType(type = Void.class) //
-}, attributes = { //
-	@TargetAttributeType(name = "Registers", type = DbgModelTargetRegisterContainerImpl.class, required = true, fixed = true), //
-	@TargetAttributeType(name = "Stack", type = DbgModelTargetStackImpl.class, required = true, fixed = true), //
-	@TargetAttributeType(name = TargetEnvironment.ARCH_ATTRIBUTE_NAME, type = String.class), //
-	@TargetAttributeType(type = Void.class) //
-})
+@TargetObjectSchemaInfo(name = "Thread", elements = {
+	@TargetElementType(type = Void.class) }, attributes = {
+		@TargetAttributeType(name = "Registers", type = DbgModelTargetRegisterContainerImpl.class, required = true, fixed = true),
+		@TargetAttributeType(name = "Stack", type = DbgModelTargetStackImpl.class, required = true, fixed = true),
+		@TargetAttributeType(name = TargetEnvironment.ARCH_ATTRIBUTE_NAME, type = String.class),
+		@TargetAttributeType(type = Void.class) })
 public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		implements DbgModelTargetThread {
 
-	protected static final TargetStepKindSet SUPPORTED_KINDS = TargetStepKindSet.of( //
-		TargetStepKind.ADVANCE, TargetStepKind.FINISH, TargetStepKind.LINE, TargetStepKind.OVER,
-		TargetStepKind.OVER_LINE, TargetStepKind.RETURN, TargetStepKind.UNTIL);
+	public static final TargetStepKindSet SUPPORTED_KINDS = TargetStepKindSet.of( //
+		TargetStepKind.ADVANCE, //
+		TargetStepKind.FINISH, //
+		TargetStepKind.LINE, //
+		TargetStepKind.OVER, //
+		TargetStepKind.OVER_LINE, //
+		TargetStepKind.RETURN, //
+		TargetStepKind.UNTIL, //
+		TargetStepKind.EXTENDED);
 
 	protected static String indexThread(DebugThreadId debugThreadId) {
 		return PathUtils.makeIndex(debugThreadId.id);
@@ -67,10 +67,13 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 	protected final DbgModelTargetStackImpl stack;
 
 	private DbgModelTargetProcess process;
+	private Integer base = 16;
 
 	public DbgModelTargetThreadImpl(DbgModelTargetThreadContainer threads,
 			DbgModelTargetProcess process, DbgThread thread) {
 		super(threads.getModel(), threads, keyThread(thread), "Thread");
+		this.getModel().addModelObject(thread, this);
+		this.getModel().addModelObject(thread.getId(), this);
 		this.process = process;
 		this.thread = thread;
 
@@ -81,7 +84,7 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 			registers, //
 			stack //
 		), Map.of( //
-			ACCESSIBLE_ATTRIBUTE_NAME, false, //
+			ACCESSIBLE_ATTRIBUTE_NAME, accessible = false, //
 			DISPLAY_ATTRIBUTE_NAME, getDisplay(), //
 			SUPPORTED_STEP_KINDS_ATTRIBUTE_NAME, SUPPORTED_KINDS //
 		), "Initialized");
@@ -96,52 +99,30 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 		if (getManager().isKernelMode()) {
 			return "[PR" + thread.getId().id + "]";
 		}
-		return "[" + thread.getId().id + ":0x" + Long.toHexString(thread.getTid()) + "]";
+		String tidstr = Long.toString(thread.getTid(), base);
+		if (base == 16) {
+			tidstr = "0x" + tidstr;
+		}
+		return "[" + thread.getId().id + ":" + tidstr + "]";
 	}
 
 	@Override
 	public void threadSelected(DbgThread eventThread, DbgStackFrame frame, DbgCause cause) {
 		if (eventThread.equals(thread)) {
-			AtomicReference<DbgModelTargetFocusScope<?>> scope = new AtomicReference<>();
-			AsyncUtils.sequence(TypeSpec.VOID).then(seq -> {
-				DebugModelConventions.findSuitable(DbgModelTargetFocusScope.class, this)
-						.handle(seq::next);
-			}, scope).then(seq -> {
-				scope.get().setFocus(this);
-			}).finish();
+			((DbgModelTargetFocusScope) searchForSuitable(TargetFocusScope.class)).setFocus(this);
 		}
 	}
 
 	@Override
-	public void threadStateChanged(DbgState state, DbgReason reason) {
+	public void threadStateChangedSpecific(DbgState state, DbgReason reason) {
 		TargetExecutionState targetState = convertState(state);
 		String executionType = thread.getExecutingProcessorType().description;
 		changeAttributes(List.of(), List.of(), Map.of( //
+			STATE_ATTRIBUTE_NAME, targetState, //
 			TargetEnvironment.ARCH_ATTRIBUTE_NAME, executionType //
 		), reason.desc());
 		setExecutionState(targetState, reason.desc());
-	}
-
-	@Override
-	public ExecSuffix convertToDbg(TargetStepKind kind) {
-		switch (kind) {
-			case FINISH:
-				return ExecSuffix.FINISH;
-			case INTO:
-				return ExecSuffix.STEP_INSTRUCTION;
-			case LINE:
-				return ExecSuffix.STEP;
-			case OVER:
-				return ExecSuffix.NEXT_INSTRUCTION;
-			case OVER_LINE:
-				return ExecSuffix.NEXT;
-			case RETURN:
-				return ExecSuffix.RETURN;
-			case UNTIL:
-				return ExecSuffix.UNTIL;
-			default:
-				throw new AssertionError();
-		}
+		registers.threadStateChangedSpecific(state, reason);
 	}
 
 	@Override
@@ -152,14 +133,19 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 			case ADVANCE: // Why no exec-advance in GDB/MI?
 				return thread.console("advance");
 			default:
-				return thread.step(convertToDbg(kind));
+				return model.gateFuture(thread.step(convertToDbg(kind)));
 		}
 	}
 
 	@Override
-	public CompletableFuture<Void> select() {
+	public CompletableFuture<Void> step(Map<String, ?> args) {
+		return model.gateFuture(thread.step(args));
+	}
+
+	@Override
+	public CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
-		return manager.execute(new DbgThreadSelectCommand(manager, thread, null));
+		return manager.execute(new DbgSetActiveThreadCommand(manager, thread, null));
 	}
 
 	public DbgModelTargetRegisterContainerAndBank getRegisters() {
@@ -181,13 +167,20 @@ public class DbgModelTargetThreadImpl extends DbgModelTargetObjectImpl
 	}
 
 	@Override
-	public TargetAccessibility getAccessibility() {
-		return accessibility;
+	public boolean isAccessible() {
+		return accessible;
 	}
 
 	@Override
 	public String getExecutingProcessorType() {
 		return thread.getExecutingProcessorType().description;
+	}
+
+	public void setBase(Object value) {
+		this.base = (Integer) value;
+		changeAttributes(List.of(), List.of(), Map.of( //
+			DISPLAY_ATTRIBUTE_NAME, getDisplay()//
+		), "Started");
 	}
 
 }

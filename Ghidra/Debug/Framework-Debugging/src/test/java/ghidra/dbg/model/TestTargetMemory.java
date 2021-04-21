@@ -29,7 +29,7 @@ import ghidra.program.model.address.AddressRange;
 
 public class TestTargetMemory
 		extends DefaultTestTargetObject<TestTargetMemoryRegion, TestTargetProcess>
-		implements TargetMemory<TestTargetMemory>, TargetAccessConditioned<TestTargetMemory> {
+		implements TargetMemory, TargetAccessConditioned {
 
 	protected final SemisparseByteArray memory = new SemisparseByteArray();
 
@@ -47,7 +47,7 @@ public class TestTargetMemory
 		memory.getData(address.getOffset(), data);
 		CompletableFuture<byte[]> future = getModel().future(data);
 		future.thenAccept(__ -> {
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, data);
+			listeners.fire.memoryUpdated(this, address, data);
 		});
 		return future;
 	}
@@ -62,7 +62,7 @@ public class TestTargetMemory
 		setMemory(address, data);
 		CompletableFuture<Void> future = getModel().future(null);
 		future.thenAccept(__ -> {
-			listeners.fire(TargetMemoryListener.class).memoryUpdated(this, address, data);
+			listeners.fire.memoryUpdated(this, address, data);
 		});
 		return future;
 	}
@@ -73,13 +73,11 @@ public class TestTargetMemory
 		return region;
 	}
 
-	public TargetAccessibility setAccessibility(TargetAccessibility accessibility) {
-		TargetAccessibility old = getAccessibility();
-		changeAttributes(List.of(), Map.of(
-			ACCESSIBLE_ATTRIBUTE_NAME, accessibility == TargetAccessibility.ACCESSIBLE //
-		), "Set Test Memory Accessibility");
-		listeners.fire(TargetAccessibilityListener.class)
-				.accessibilityChanged(this, accessibility);
+	public boolean setAccessible(boolean accessible) {
+		boolean old = isAccessible();
+		changeAttributes(List.of(), Map.ofEntries(
+			Map.entry(ACCESSIBLE_ATTRIBUTE_NAME, accessible)),
+			"Set Test Memory Accessibility");
 		return old;
 	}
 }

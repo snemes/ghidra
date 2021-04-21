@@ -19,9 +19,7 @@ import java.util.concurrent.CompletableFuture;
 
 import agent.dbgeng.dbgeng.DebugProcessId;
 import agent.dbgeng.dbgeng.DebugSystemObjects;
-import agent.dbgeng.manager.DbgEventsListenerAdapter;
-import agent.dbgeng.manager.DbgProcess;
-import agent.dbgeng.manager.cmd.DbgProcessSelectCommand;
+import agent.dbgeng.manager.*;
 import agent.dbgeng.manager.impl.DbgManagerImpl;
 import agent.dbgeng.model.iface1.*;
 import ghidra.dbg.target.TargetAggregate;
@@ -30,28 +28,28 @@ import ghidra.dbg.util.PathUtils;
 
 public interface DbgModelTargetProcess extends //
 		TargetAggregate, //
-		TargetProcess<DbgModelTargetProcess>, //
-		DbgModelTargetExecutionStateful<DbgModelTargetProcess>, //
-		DbgModelTargetAccessConditioned<DbgModelTargetProcess>, //
-		DbgModelTargetAttacher<DbgModelTargetProcess>, //
-		DbgModelTargetAttachable<DbgModelTargetProcess>, //
-		DbgModelTargetLauncher<DbgModelTargetProcess>, //
-		DbgModelTargetDeletable<DbgModelTargetProcess>, //
-		DbgModelTargetDetachable<DbgModelTargetProcess>, //
-		DbgModelTargetKillable<DbgModelTargetProcess>, //
-		DbgModelTargetResumable<DbgModelTargetProcess>, //
-		DbgModelTargetSteppable<DbgModelTargetProcess>, //
-		DbgModelTargetInterruptible<DbgModelTargetProcess>, // 
+		TargetProcess, //
+		DbgModelTargetExecutionStateful, //
+		DbgModelTargetAccessConditioned, //
+		DbgModelTargetAttacher, //
+		DbgModelTargetAttachable, //
+		DbgModelTargetLauncher, //
+		DbgModelTargetDeletable, //
+		DbgModelTargetDetachable, //
+		DbgModelTargetKillable, //
+		DbgModelTargetResumable, //
+		DbgModelTargetSteppable, //
+		DbgModelTargetInterruptible, // 
 		DbgEventsListenerAdapter, //
 		DbgModelSelectableObject {
 
 	public void processStarted(Long pid);
 
-	public void processExited(Long exitCode);
-
 	public DbgModelTargetThreadContainer getThreads();
 
 	public DbgModelTargetModuleContainer getModules();
+
+	public void threadStateChangedSpecific(DbgThread thread, DbgState state);
 
 	public default DbgProcess getProcess() {
 		DbgManagerImpl manager = getManager();
@@ -71,12 +69,13 @@ public interface DbgModelTargetProcess extends //
 	}
 
 	@Override
-	public default CompletableFuture<Void> select() {
+	public default CompletableFuture<Void> setActive() {
 		DbgManagerImpl manager = getManager();
 		DbgProcess process = getProcess();
 		if (process == null) {
 			process = manager.getEventProcess();
 		}
-		return manager.execute(new DbgProcessSelectCommand(manager, process));
+		return manager.setActiveProcess(process);
 	}
+
 }

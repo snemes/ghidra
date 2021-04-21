@@ -29,8 +29,7 @@ import ghidra.trace.database.DBTraceUtils;
 import ghidra.trace.database.symbol.*;
 import ghidra.trace.model.symbol.*;
 import ghidra.util.*;
-import ghidra.util.exception.DuplicateNameException;
-import ghidra.util.exception.InvalidInputException;
+import ghidra.util.exception.*;
 
 public class DBTraceProgramViewSymbolTable implements SymbolTable {
 
@@ -154,12 +153,16 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 		}
 	}
 
-	protected <T extends TraceSymbol> T requireInLifespan(T sym) {
+	protected <T extends TraceSymbol> T requireVisible(T sym) {
 		if (!(sym instanceof TraceSymbolWithLifespan)) {
 			return sym;
 		}
+		if (sym instanceof TraceFunctionSymbol) {
+			TraceFunctionSymbol function = (TraceFunctionSymbol) sym;
+			return program.isFunctionVisible(function, function.getLifespan()) ? sym : null;
+		}
 		TraceSymbolWithLifespan wl = (TraceSymbolWithLifespan) sym;
-		if (wl.getLifespan().contains(program.snap)) {
+		if (program.viewport.containsAnyUpper(wl.getLifespan())) {
 			return sym;
 		}
 		return null;
@@ -167,7 +170,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 
 	@Override
 	public Symbol getSymbol(long symbolID) {
-		return requireInLifespan(symbolManager.getSymbolByID(symbolID));
+		return requireVisible(symbolManager.getSymbolByID(symbolID));
 	}
 
 	@Override
@@ -179,7 +182,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 				if (!addr.equals(sym.getAddress())) {
 					continue;
 				}
-				if (requireInLifespan(sym) == null) {
+				if (requireVisible(sym) == null) {
 					continue;
 				}
 				return sym;
@@ -199,7 +202,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 			for (TraceSymbol sym : symbolManager.allSymbols()
 					.getChildrenNamed(name,
 						assertTraceNamespace(namespace))) {
-				if (requireInLifespan(sym) == null) {
+				if (requireVisible(sym) == null) {
 					continue;
 				}
 				return sym;
@@ -219,7 +222,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 		try (LockHold hold = program.trace.lockRead()) {
 			List<Symbol> result = new ArrayList<>();
 			for (TraceSymbol sym : symbolManager.allSymbols().getChildrenNamed(name, parent)) {
-				if (requireInLifespan(sym) != null) {
+				if (requireVisible(sym) != null) {
 					result.add(sym);
 				}
 			}
@@ -240,7 +243,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 			for (TraceSymbol sym : symbolManager.labelsAndFunctions()
 					.getChildrenNamed(name,
 						parent)) {
-				if (requireInLifespan(sym) != null) {
+				if (requireVisible(sym) != null) {
 					result.add(sym);
 				}
 			}
@@ -353,7 +356,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 		if (addr.isMemoryAddress()) {
 			return symbolManager.labelsAndFunctions().hasAt(program.snap, null, addr, true);
 		}
-		if (addr.isRegisterAddress() || addr.isStackAddress()) {
+		if (addr.getAddressSpace().isRegisterSpace() || addr.isStackAddress()) {
 			return symbolManager.allVariables().hasAt(addr, true);
 		}
 		return false;
@@ -528,7 +531,7 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 				return sym.getParentNamespace();
 			}
 		}
-		if (addr.isRegisterAddress() || addr.isStackAddress()) {
+		if (addr.getAddressSpace().isRegisterSpace() || addr.isStackAddress()) {
 			for (TraceSymbol sym : symbolManager.allVariables().getAt(addr, true)) {
 				return sym.getParentNamespace();
 			}
@@ -569,6 +572,47 @@ public class DBTraceProgramViewSymbolTable implements SymbolTable {
 	public Namespace createNameSpace(Namespace parent, String name, SourceType source)
 			throws DuplicateNameException, InvalidInputException {
 		return symbolManager.namespaces().add(name, assertTraceNamespace(parent), source);
+	}
+
+	@Override
+	public Namespace getOrCreateNameSpace(Namespace parent, String name, SourceType source)
+			throws DuplicateNameException, InvalidInputException {
+		try (LockHold hold = program.trace.lockWrite()) {
+			Collection<? extends DBTraceNamespaceSymbol> exist =
+				symbolManager.namespaces().getNamed(name);
+			if (!exist.isEmpty()) {
+				return exist.iterator().next();
+			}
+			return createNameSpace(parent, name, source);
+		}
+	}
+
+	@Override
+	public GhidraClass convertNamespaceToClass(Namespace namespace) {
+		if (namespace instanceof GhidraClass) {
+			return (GhidraClass) namespace;
+		}
+		try (LockHold hold = program.trace.lockWrite()) {
+			DBTraceNamespaceSymbol dbNamespace = symbolManager.assertIsMine(namespace);
+
+			String origName = dbNamespace.getName();
+			SourceType origSource = dbNamespace.getSource();
+
+			String tempName = origName + System.nanoTime();
+			DBTraceClassSymbol dbClass =
+				symbolManager.classes().add(tempName, dbNamespace.getParentNamespace(), origSource);
+			for (AbstractDBTraceSymbol child : dbNamespace.getChildren()) {
+				child.setNamespace(dbClass);
+			}
+
+			dbNamespace.delete();
+			dbClass.setName(origName, origSource);
+			return dbClass;
+		}
+		catch (DuplicateNameException | InvalidInputException | IllegalArgumentException
+				| CircularDependencyException e) {
+			throw new AssertException("Unexpected exception creating class from namespace", e);
+		}
 	}
 
 	@Override

@@ -20,42 +20,42 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
-import agent.dbgeng.dbgeng.DebugProcessId;
-import agent.dbgeng.dbgeng.DebugThreadId;
+import agent.dbgeng.dbgeng.*;
 import agent.dbgeng.manager.*;
+import agent.dbgeng.model.iface1.DbgModelTargetConfigurable;
 import agent.dbgeng.model.iface2.*;
-import ghidra.dbg.target.TargetAccessConditioned.TargetAccessibility;
-import ghidra.dbg.target.schema.*;
+import ghidra.async.AsyncUtils;
+import ghidra.dbg.error.DebuggerIllegalArgumentException;
+import ghidra.dbg.target.TargetConfigurable;
 import ghidra.dbg.target.TargetObject;
-import ghidra.util.datastruct.WeakValueHashMap;
+import ghidra.dbg.target.schema.*;
 
 @TargetObjectSchemaInfo(name = "ProcessContainer", elements = { //
 	@TargetElementType(type = DbgModelTargetProcessImpl.class) //
 }, attributes = { //
+	@TargetAttributeType(name = TargetConfigurable.BASE_ATTRIBUTE_NAME, type = Integer.class), //
 	@TargetAttributeType(type = Void.class) //
 }, canonicalContainer = true)
 public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
-		implements DbgModelTargetProcessContainer {
-
-	protected final Map<DebugProcessId, DbgModelTargetProcess> processesById =
-		new WeakValueHashMap<>();
+		implements DbgModelTargetProcessContainer, DbgModelTargetConfigurable {
 
 	public DbgModelTargetProcessContainerImpl(DbgModelTargetSession session) {
 		super(session.getModel(), session, "Processes", "ProcessContainer");
+		this.changeAttributes(List.of(), Map.of(BASE_ATTRIBUTE_NAME, 16), "Initialized");
 
 		getManager().addEventsListener(this);
 	}
 
 	@Override
 	public void processAdded(DbgProcess proc, DbgCause cause) {
-		DbgModelTargetSession session = (DbgModelTargetSession) getImplParent();
-		session.setAccessibility(TargetAccessibility.ACCESSIBLE);
+		DbgModelTargetSession session = (DbgModelTargetSession) getParent();
+		session.setAccessible(true);
 		DbgModelTargetProcess process = getTargetProcess(proc);
 		changeElements(List.of(), List.of(process), Map.of(), "Added");
 		process.processStarted(proc.getPid());
-		getListeners().fire(TargetEventScopeListener.class)
-				.event(this, null, TargetEventType.PROCESS_CREATED, "Process " + proc.getId() +
-					" started " + "notepad.exe" + " pid=" + proc.getPid(), List.of(process));
+		getListeners().fire.event(getProxy(), null, TargetEventType.PROCESS_CREATED,
+			"Process " + proc.getId() + " started " + process.getName() + "pid=" + proc.getPid(),
+			List.of(process));
 	}
 
 	@Override
@@ -65,20 +65,7 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 	}
 
 	@Override
-	public void processExited(DbgProcess proc, DbgCause cause) {
-		DbgModelTargetProcess process = getTargetProcess(proc);
-		process.processExited(proc.getExitCode());
-		getListeners().fire(TargetEventScopeListener.class)
-				.event(this, null, TargetEventType.PROCESS_EXITED,
-					"Process " + proc.getId() + " exited code=" + proc.getExitCode(),
-					List.of(process));
-	}
-
-	@Override
 	public void processRemoved(DebugProcessId processId, DbgCause cause) {
-		synchronized (this) {
-			processesById.remove(processId);
-		}
 		changeElements(List.of( //
 			DbgModelTargetProcessImpl.indexProcess(processId) //
 		), List.of(), Map.of(), "Removed");
@@ -94,27 +81,30 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 	public void threadStateChanged(DbgThread thread, DbgState state, DbgCause cause,
 			DbgReason reason) {
 		DbgModelTargetProcess process = getTargetProcess(thread.getProcess());
-		process.threadStateChanged(thread, state, cause, reason);
+		process.threadStateChangedSpecific(thread, state);
 	}
 
 	@Override
 	public void threadExited(DebugThreadId threadId, DbgProcess proc, DbgCause cause) {
-		DbgModelTargetProcess targetProcess = processesById.get(proc.getId());
-		if (targetProcess != null) {
-			targetProcess.getThreads().threadExited(threadId);
+		DbgModelTargetProcess process = getTargetProcess(proc);
+		if (process != null) {
+			process.getThreads().threadExited(threadId);
 		}
 	}
 
 	@Override
-	public void moduleLoaded(DbgProcess proc, String name, DbgCause cause) {
+	public void moduleLoaded(DbgProcess proc, DebugModuleInfo info, DbgCause cause) {
 		DbgModelTargetProcess process = getTargetProcess(proc);
-		process.getModules().libraryLoaded(name);
+		DbgModelTargetModuleContainer modules = process.getModules();
+		if (modules != null) {
+			modules.libraryLoaded(info.toString());
+		}
 	}
 
 	@Override
-	public void moduleUnloaded(DbgProcess proc, String name, DbgCause cause) {
+	public void moduleUnloaded(DbgProcess proc, DebugModuleInfo info, DbgCause cause) {
 		DbgModelTargetProcess process = getTargetProcess(proc);
-		process.getModules().libraryUnloaded(name);
+		process.getModules().libraryUnloaded(info.toString());
 	}
 
 	@Override
@@ -133,14 +123,45 @@ public class DbgModelTargetProcessContainerImpl extends DbgModelTargetObjectImpl
 
 	@Override
 	public synchronized DbgModelTargetProcess getTargetProcess(DebugProcessId id) {
-		return processesById.computeIfAbsent(id,
-			i -> new DbgModelTargetProcessImpl(this, getManager().getKnownProcesses().get(id)));
+		DbgModelImpl impl = (DbgModelImpl) model;
+		TargetObject modelObject = impl.getModelObject(id);
+		if (modelObject != null) {
+			return (DbgModelTargetProcess) modelObject;
+		}
+		return new DbgModelTargetProcessImpl(this, getManager().getKnownProcesses().get(id));
 	}
 
 	@Override
 	public synchronized DbgModelTargetProcess getTargetProcess(DbgProcess process) {
-		return processesById.computeIfAbsent(process.getId(),
-			i -> new DbgModelTargetProcessImpl(this, process));
+		DbgModelImpl impl = (DbgModelImpl) model;
+		TargetObject modelObject = impl.getModelObject(process);
+		if (modelObject != null) {
+			return (DbgModelTargetProcess) modelObject;
+		}
+		return new DbgModelTargetProcessImpl(this, process);
+	}
+
+	@Override
+	public CompletableFuture<Void> writeConfigurationOption(String key, Object value) {
+		switch (key) {
+			case BASE_ATTRIBUTE_NAME:
+				if (value instanceof Integer) {
+					this.changeAttributes(List.of(), Map.of(BASE_ATTRIBUTE_NAME, value),
+						"Modified");
+					for (TargetObject child : getCachedElements().values()) {
+						if (child instanceof DbgModelTargetProcessImpl) {
+							DbgModelTargetProcessImpl targetProcess =
+								(DbgModelTargetProcessImpl) child;
+							targetProcess.setBase(value);
+						}
+					}
+				}
+				else {
+					throw new DebuggerIllegalArgumentException("Base should be numeric");
+				}
+			default:
+		}
+		return AsyncUtils.NIL;
 	}
 
 }

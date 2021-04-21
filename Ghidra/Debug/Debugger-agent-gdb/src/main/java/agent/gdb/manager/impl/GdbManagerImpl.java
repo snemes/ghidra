@@ -36,6 +36,7 @@ import agent.gdb.manager.impl.cmd.*;
 import agent.gdb.manager.parsing.GdbMiParser;
 import agent.gdb.manager.parsing.GdbParsingUtils.GdbParseError;
 import ghidra.async.*;
+import ghidra.async.AsyncLock.Hold;
 import ghidra.dbg.error.DebuggerModelTerminatingException;
 import ghidra.dbg.util.HandlerMap;
 import ghidra.dbg.util.PrefixMap;
@@ -63,12 +64,15 @@ import sun.misc.SignalHandler;
  * event is processed using a {@link HandlerMap}.
  */
 public class GdbManagerImpl implements GdbManager {
+	private static final String GDB_IS_TERMINATING = "GDB is terminating";
+
 	@Internal
 	public enum Interpreter {
 		CLI, MI2;
 	}
 
-	private static final boolean LOG_IO = false;
+	private static final boolean LOG_IO = true |
+		Boolean.parseBoolean(System.getProperty("agent.gdb.manager.log"));
 	private static final PrintWriter DBG_LOG;
 	static {
 		if (LOG_IO) {
@@ -445,9 +449,9 @@ public class GdbManagerImpl implements GdbManager {
 	}
 
 	private void checkStartedNotExit() {
-		GdbState st = state.get();
-		if (st == GdbState.NOT_STARTED || st == GdbState.EXIT) {
-			throw new IllegalStateException("GDB is not yet, or no longer running");
+		checkStarted();
+		if (state.get() == GdbState.EXIT) {
+			throw new DebuggerModelTerminatingException(GDB_IS_TERMINATING);
 		}
 	}
 
@@ -553,13 +557,21 @@ public class GdbManagerImpl implements GdbManager {
 
 		if (gdbCmd != null) {
 			iniThread = new PtyThread(Pty.openpty(), Channel.STDOUT, null);
+
 			gdb = iniThread.pty.getSlave().session(fullargs.toArray(new String[] {}), null);
+			gdbWaiter = new Thread(this::waitGdbExit, "GDB WaitExit");
+			gdbWaiter.start();
+
 			iniThread.start();
 			try {
-				iniThread.hasWriter.get(10, TimeUnit.SECONDS);
+				CompletableFuture.anyOf(iniThread.hasWriter, state.waitValue(GdbState.EXIT))
+						.get(10, TimeUnit.SECONDS);
 			}
 			catch (InterruptedException | ExecutionException | TimeoutException e) {
 				throw new IOException("Could not detect GDB's interpreter mode");
+			}
+			if (state.get() == GdbState.EXIT) {
+				throw new IOException("GDB terminated before first prompt");
 			}
 			switch (iniThread.interpreter) {
 				case CLI:
@@ -584,9 +596,6 @@ public class GdbManagerImpl implements GdbManager {
 					mi2Thread.setName("GDB Read MI2");
 					break;
 			}
-
-			gdbWaiter = new Thread(this::waitGdbExit, "GDB WaitExit");
-			gdbWaiter.start();
 		}
 		else {
 			mi2Thread = new PtyThread(Pty.openpty(), Channel.STDOUT, Interpreter.MI2);
@@ -617,10 +626,8 @@ public class GdbManagerImpl implements GdbManager {
 			state.set(GdbState.EXIT, Causes.UNCLAIMED);
 			exited.set(true);
 			if (!executor.isShutdown()) {
-				submit(() -> {
-					processGdbExited(exitcode);
-					terminate();
-				});
+				processGdbExited(exitcode);
+				terminate();
 			}
 		}
 		catch (InterruptedException e) {
@@ -654,7 +661,7 @@ public class GdbManagerImpl implements GdbManager {
 			gdb.destroyForcibly();
 		}
 		DebuggerModelTerminatingException reason =
-			new DebuggerModelTerminatingException("GDB is terminating");
+			new DebuggerModelTerminatingException(GDB_IS_TERMINATING);
 		cmdLock.dispose(reason);
 		state.dispose(reason);
 		mi2Prompt.dispose(reason);
@@ -667,13 +674,18 @@ public class GdbManagerImpl implements GdbManager {
 		}
 	}
 
+	protected <T> CompletableFuture<T> execute(GdbCommand<? extends T> cmd) {
+		// NB. curCmd::finish is passed to eventThread already 
+		return doExecute(cmd);//.thenApplyAsync(t -> t, eventThread);
+	}
+
 	/**
 	 * Schedule a command for execution
 	 * 
 	 * @param cmd the command to execute
 	 * @return the pending command, which acts as a future for later completion
 	 */
-	protected <T> GdbPendingCommand<T> execute(GdbCommand<? extends T> cmd) {
+	protected <T> GdbPendingCommand<T> doExecute(GdbCommand<? extends T> cmd) {
 		assert cmd != null;
 		checkStartedNotExit();
 		GdbPendingCommand<T> pcmd = new GdbPendingCommand<>(cmd);
@@ -689,6 +701,11 @@ public class GdbManagerImpl implements GdbManager {
 				if (gdb != null && !cmd.validInState(state.get())) {
 					throw new GdbCommandError(
 						"Command " + cmd + " is not valid while " + state.get());
+				}
+				cmd.preCheck(pcmd);
+				if (pcmd.isDone()) {
+					cmdLockHold.getAndSet(null).release();
+					return;
 				}
 				curCmd = pcmd;
 			}
@@ -711,7 +728,10 @@ public class GdbManagerImpl implements GdbManager {
 			curCmd = null;
 			//Msg.debug(this, "SET CURCMD = null");
 			//Msg.debug(this, "RELEASING cmdLock");
-			cmdLockHold.getAndSet(null).release();
+			Hold hold = cmdLockHold.getAndSet(null);
+			if (hold != null) {
+				hold.release();
+			}
 			return null;
 		});
 		return pcmd;
@@ -728,6 +748,27 @@ public class GdbManagerImpl implements GdbManager {
 		}
 	}
 
+	protected void checkImpliedFocusChange() {
+		Integer tid = curCmd.impliesCurrentThreadId();
+		GdbThreadImpl thread = null;
+		if (tid != null) {
+			thread = threads.get(tid);
+			if (thread == null) {
+				Msg.info(this, "Thread " + tid + " no longer exists");
+				return;
+				// Presumably, some event will have announced the new current thread
+			}
+		}
+		Integer level = curCmd.impliesCurrentFrameId();
+		GdbStackFrameImpl frame = null;
+		if (level != null) {
+			frame = new GdbStackFrameImpl(thread, level, null, null);
+		}
+		if (thread != null) {
+			doThreadSelected(thread, frame, curCmd);
+		}
+	}
+
 	protected synchronized void processEvent(GdbEvent<?> evt) {
 		/**
 		 * NOTE: I've forgotten why, but the the state update needs to happen between handle and
@@ -736,21 +777,24 @@ public class GdbManagerImpl implements GdbManager {
 		boolean cmdFinished = false;
 		if (curCmd != null) {
 			cmdFinished = curCmd.handle(evt);
+			if (cmdFinished) {
+				checkImpliedFocusChange();
+			}
 		}
 
 		GdbState newState = evt.newState();
 		//Msg.debug(this, evt + " transitions state to " + newState);
 		state.set(newState, evt.getCause());
 
+		// NOTE: Do not check if claimed here.
+		// Downstream processing should check for cause
+		handlerMap.handle(evt, null);
+
 		if (cmdFinished) {
 			event(curCmd::finish, "curCmd::finish");
 			curCmd = null;
 			cmdLockHold.getAndSet(null).release();
 		}
-
-		// NOTE: Do not check if claimed here.
-		// Downstream processing should check for cause
-		handlerMap.handle(evt, null);
 	}
 
 	/**
@@ -804,7 +848,7 @@ public class GdbManagerImpl implements GdbManager {
 				throw new RuntimeException("GDB gave an unrecognized response", e);
 			}
 			catch (IllegalArgumentException e) {
-				Msg.warn(this, e.getMessage());
+				Msg.warn(this, "Error processing GDB output", e);
 			}
 		}
 	}
@@ -917,7 +961,7 @@ public class GdbManagerImpl implements GdbManager {
 			event(() -> listenersEvent.fire.inferiorSelected(cur, evt.getCause()),
 				"groupRemoved-sel");
 			// Also cause GDB to generate thread selection events, if applicable
-			selectInferior(cur);
+			setActiveInferior(cur);
 		}
 	}
 
@@ -1115,6 +1159,7 @@ public class GdbManagerImpl implements GdbManager {
 		if (Objects.equals(newInfo, oldInfo)) {
 			return;
 		}
+		addKnownBreakpoint(newInfo, true);
 		event(() -> listenersEvent.fire.breakpointModified(newInfo, oldInfo, cause),
 			"breakpointModified");
 	}
@@ -1126,7 +1171,7 @@ public class GdbManagerImpl implements GdbManager {
 			return;
 		}
 		GdbBreakpointInfo newInfo = oldInfo.withEnabled(false);
-		oldInfo = oldInfo.withEnabled(true);
+		//oldInfo = oldInfo.withEnabled(true);
 		doBreakpointModifiedSameLocations(newInfo, oldInfo, cause);
 	}
 
@@ -1137,7 +1182,7 @@ public class GdbManagerImpl implements GdbManager {
 			return;
 		}
 		GdbBreakpointInfo newInfo = oldInfo.withEnabled(true);
-		oldInfo = oldInfo.withEnabled(false);
+		//oldInfo = oldInfo.withEnabled(false);
 		doBreakpointModifiedSameLocations(newInfo, oldInfo, cause);
 	}
 
@@ -1310,7 +1355,7 @@ public class GdbManagerImpl implements GdbManager {
 		}
 		if (evtThread != null) {
 			GdbStackFrameImpl frame = evt.getFrame(evtThread);
-			event(() -> listenersEvent.fire.threadSelected(evtThread, frame, evt.getCause()),
+			event(() -> listenersEvent.fire.threadSelected(evtThread, frame, evt),
 				"inferiorState-stopped");
 		}
 	}
@@ -1459,6 +1504,18 @@ public class GdbManagerImpl implements GdbManager {
 	}
 
 	@Override
+	public CompletableFuture<GdbInferior> availableInferior() {
+		return listInferiors().thenCompose(map -> {
+			for (GdbInferior inf : map.values()) {
+				if (inf.getPid() == null) {
+					return CompletableFuture.completedFuture(inf);
+				}
+			}
+			return addInferior();
+		});
+	}
+
+	@Override
 	public CompletableFuture<Void> removeInferior(GdbInferior inferior) {
 		return execute(new GdbRemoveInferiorCommand(this, inferior.getId()));
 	}
@@ -1466,12 +1523,13 @@ public class GdbManagerImpl implements GdbManager {
 	/**
 	 * Select the given inferior
 	 * 
+	 * <p>
 	 * This issues a command to GDB to change its focus. It is not just a manager concept.
 	 * 
 	 * @param inferior the inferior to select
 	 * @return a future that completes when GDB has executed the command
 	 */
-	CompletableFuture<Void> selectInferior(GdbInferior inferior) {
+	CompletableFuture<Void> setActiveInferior(GdbInferior inferior) {
 		return execute(new GdbInferiorSelectCommand(this, inferior.getId()));
 	}
 

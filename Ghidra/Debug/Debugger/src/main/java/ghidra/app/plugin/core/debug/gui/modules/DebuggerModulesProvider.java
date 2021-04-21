@@ -73,6 +73,7 @@ public class DebuggerModulesProvider extends ComponentProviderAdapter {
 		implements EnumeratedTableColumn<ModuleTableColumns, ModuleRow> {
 		BASE("Base Address", Address.class, ModuleRow::getBase),
 		MAX("Max Address", Address.class, ModuleRow::getMaxAddress),
+		SHORT_NAME("Name", String.class, ModuleRow::getShortName),
 		NAME("Module Name", String.class, ModuleRow::getName, ModuleRow::setName),
 		LIFESPAN("Lifespan", Range.class, ModuleRow::getLifespan),
 		LENGTH("Length", Long.class, ModuleRow::getLength);
@@ -488,9 +489,6 @@ public class DebuggerModulesProvider extends ComponentProviderAdapter {
 			return false;
 		}
 	}
-
-	// TODO: Display modules in timeline?
-	// TODO: Select module/section containing current address? 
 
 	private final DebuggerModulesPlugin plugin;
 
